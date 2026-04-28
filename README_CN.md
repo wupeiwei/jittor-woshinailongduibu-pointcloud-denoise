@@ -176,45 +176,55 @@ source scripts/env.sh
 "$PYTHON" scripts/check_data.py --limit 5
 ```
 
-## 6. 训练命令
+## 6. 训练与复现
+
+本项目代码并不绑定作者本人的机器。一般来说，只要 Python / Jittor / CUDA 等依赖配置正确，并且数据目录准备好，就可以在其他兼容机器上运行训练入口。
+
+仓库中的 `configs/profiles/*.yaml` 只用于覆盖与机器能力相关的参数，例如 batch size、点数、patch size、训练步数等，不改变核心算法。如果你的显卡和作者不同，可以选择最接近的 profile，或者自己新建一个 profile。
+
+### 6.1 最小可运行命令
 
 普通 baseline：
 
 ```bash
-bash scripts/train.sh configs/denoise_baseline.yaml configs/profiles/local_dev.yaml
+bash scripts/train.sh configs/denoise_baseline.yaml
 ```
 
 PW-SENEL：
 
 ```bash
-bash scripts/train.sh configs/denoise_pwsenel.yaml configs/profiles/local_dev.yaml
+bash scripts/train.sh configs/denoise_pwsenel.yaml
 ```
 
 ST-AAS v0：
 
 ```bash
-bash scripts/train.sh configs/denoise_staas_v0.yaml configs/profiles/local_dev.yaml
+bash scripts/train.sh configs/denoise_staas_v0.yaml
 ```
 
-RTX 5060 Ti：
+### 6.2 可选的机器 profile
+
+如果希望根据显卡显存和算力调整训练规模，可以额外传入 profile：
 
 ```bash
-bash scripts/train.sh configs/denoise_staas_v0.yaml configs/profiles/rtx5060ti.yaml
+bash scripts/train.sh configs/denoise_baseline.yaml configs/profiles/local_dev.yaml
+bash scripts/train.sh configs/denoise_baseline.yaml configs/profiles/rtx5060ti.yaml
+bash scripts/train.sh configs/denoise_baseline.yaml configs/profiles/a6000.yaml
 ```
 
-RTX A6000：
+这些 profile 是作者项目中实际使用/准备的配置示例，不是复现代码的硬性要求。
 
-```bash
-bash scripts/train.sh configs/denoise_staas_v0.yaml configs/profiles/a6000.yaml
-```
+### 6.3 作者实际操作流程
 
-推荐流程：
+作者在本项目中的实际操作流程是：
 
 ```text
-本机：代码编写、debug、小规模 smoke test
-RTX 5060 Ti：中等规模实验、ablation 预筛
-RTX A6000：大规模正式训练、最终实验
+本地开发机：代码编写、debug、小规模 smoke test、日志/结果分析
+RTX 5060 Ti：第一次完整训练、中等规模实验、ablation 预筛
+RTX A6000：更大规模正式训练、最终实验
 ```
+
+这部分是为了说明作者本人是怎么做实验的，不代表其他用户必须拥有相同硬件。其他用户只要环境和依赖配置正确，可以根据自己的显卡显存调整配置后复现训练。
 
 ## 7. 预测与提交
 
@@ -247,7 +257,7 @@ source scripts/env.sh
 source scripts/env.sh
 ```
 
-这样可以加载项目约定的 Python、编译器和 CUDA/Jittor 环境配置。
+这样可以加载项目约定的 Python、编译器和 CUDA/Jittor 环境配置。仓库里的硬件 profile 主要记录作者的实验环境，也可以按其他机器情况自行修改。
 
 ## 9. 不要上传的内容
 

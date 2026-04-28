@@ -136,45 +136,55 @@ source scripts/env.sh
 "$PYTHON" scripts/check_data.py --limit 5
 ```
 
-## 5. Training
+## 5. Training and Reproduction
+
+The code is not tied to the author's machines. In general, if the required Python/Jittor/CUDA dependencies are installed and the dataset directories are prepared, the training entry can run on other compatible machines.
+
+The provided `configs/profiles/*.yaml` files only override machine-capacity-related parameters such as batch size, number of points, patch size, and training steps. They do not change the core method. If your GPU is different, choose the closest profile or create your own profile.
+
+### 5.1 Minimal runnable commands
 
 Baseline:
 
 ```bash
-bash scripts/train.sh configs/denoise_baseline.yaml configs/profiles/local_dev.yaml
+bash scripts/train.sh configs/denoise_baseline.yaml
 ```
 
 PW-SENEL ablation:
 
 ```bash
-bash scripts/train.sh configs/denoise_pwsenel.yaml configs/profiles/local_dev.yaml
+bash scripts/train.sh configs/denoise_pwsenel.yaml
 ```
 
 ST-AAS v0 ablation:
 
 ```bash
-bash scripts/train.sh configs/denoise_staas_v0.yaml configs/profiles/local_dev.yaml
+bash scripts/train.sh configs/denoise_staas_v0.yaml
 ```
 
-For RTX 5060 Ti:
+### 5.2 Optional machine profiles
+
+Use a profile when you want to adapt the run to a specific GPU/memory budget:
 
 ```bash
-bash scripts/train.sh configs/denoise_staas_v0.yaml configs/profiles/rtx5060ti.yaml
+bash scripts/train.sh configs/denoise_baseline.yaml configs/profiles/local_dev.yaml
+bash scripts/train.sh configs/denoise_baseline.yaml configs/profiles/rtx5060ti.yaml
+bash scripts/train.sh configs/denoise_baseline.yaml configs/profiles/a6000.yaml
 ```
 
-For RTX A6000:
+These profiles are examples used in this project. They are not strict requirements for reproduction.
 
-```bash
-bash scripts/train.sh configs/denoise_staas_v0.yaml configs/profiles/a6000.yaml
-```
+### 5.3 Author's actual workflow
 
-Recommended workflow:
+The author's actual workflow during this project was:
 
 ```text
-local machine: smoke test and debugging
-RTX 5060 Ti: medium experiments and ablations
-RTX A6000: large formal training runs
+local development machine: code editing, debugging, smoke tests, log/result analysis
+RTX 5060 Ti: first complete training runs and medium-scale ablation screening
+RTX A6000: larger formal training runs and final experiments
 ```
+
+This workflow is documented for transparency. Other users can reproduce the code with different hardware by adjusting the config/profile according to their available memory and compute.
 
 ## 6. Prediction and Submission
 
@@ -208,7 +218,7 @@ Important environment convention:
 source scripts/env.sh
 ```
 
-This sets compiler and Python compatibility options for Jittor across local machines, RTX 5060 Ti, and RTX A6000 environments.
+This sets compiler and Python compatibility options for Jittor. The provided hardware profiles document the author's environment and can be adapted to other machines.
 
 ## 8. Open Source Notes
 

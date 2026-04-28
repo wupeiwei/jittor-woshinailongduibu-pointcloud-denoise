@@ -1,11 +1,11 @@
 # Reproduce: Formal Point-Cloud Denoising
 
-目标：让代码能在本机开发，也能迁移到 A6000 训练机复现。
+目标：说明如何在配置好依赖和数据后复现本项目代码，并区分通用复现步骤与作者本人的实际实验流程。
 
 ## 目录约定
 
 ```text
-/home/sallen/jittor-pointcloud-denoise
+/path/to/jittor-pointcloud-denoise
 ├── denoise_baseline.py          # 自写正式赛 baseline / PW-SENEL
 ├── configs/                     # 可复现实验配置
 ├── scripts/                     # 统一运行入口
@@ -19,13 +19,13 @@
 
 建议 Python 3.10~3.12，Jittor 可用 CUDA。若系统 Python 受 PEP668 管理，请使用 venv/conda，不要污染系统环境。
 
-本机已验证：
+作者本地环境曾验证：
 
 - Jittor CUDA OK
 - gcc/g++-10 wrapper OK
 - `trimesh`, `yaml`, `numpy` OK
 
-A6000 训练机建议：
+通用复现步骤：
 
 1. 克隆/复制本项目。
 2. 准备数据目录，并让配置里的 `paths.data_root` / `paths.test_root` 指向真实位置。
@@ -72,10 +72,10 @@ PW-SENEL ablation，与 baseline 保持同一 loss 权重：
 bash scripts/train.sh configs/denoise_pwsenel.yaml
 ```
 
-按显卡能力套 profile：
+可选：按显卡能力套 profile。profile 只调整 batch size、点数、训练步数等机器相关参数，不改变核心算法：
 
 ```bash
-# 本机/开发机
+# 作者本地开发机示例
 bash scripts/train.sh configs/denoise_baseline.yaml configs/profiles/local_dev.yaml
 
 # RTX 5060 Ti
@@ -110,6 +110,16 @@ WHEELHOUSE=wheelhouse bash scripts/install_deps.sh
 ```bash
 PYTHON=python3 bash scripts/train.sh configs/denoise_baseline.yaml configs/profiles/rtx5060ti.yaml
 ```
+
+作者实际实验流程：
+
+```text
+本地开发机：代码编写、debug、小规模 smoke test、日志/结果分析
+RTX 5060 Ti：第一次完整训练、中等规模实验、ablation 预筛
+RTX A6000：更大规模正式训练、最终实验
+```
+
+这只是作者自己的操作流程，不是复现本代码的硬性硬件要求。其他用户可以根据自己的 GPU/CPU/内存情况修改 profile 或直接运行基础配置。
 
 每次训练会保存：
 
