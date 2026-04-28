@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+title: "jittor-woshinailongduibu-pointcloud-denoise"
+message: "If you use the PW-SENEL or ST-AAS modules from this repository, please cite this project."
+type: software
+authors:
+  - name: "wupeiwei"
+    affiliation: "Team 我是奶龙对不"
+repository-code: "https://gitee.com/wpwwgw/jittor-woshinailongduibu-pointcloud-denoise"
+abstract: "Jittor implementation for point cloud denoising with the proposed PW-SENEL and ST-AAS modules for edge-preserving noise suppression."
+keywords:
+  - Jittor
+  - point cloud denoising
+  - PW-SENEL
+  - ST-AAS
+  - edge-preserving denoising
+license: Apache-2.0

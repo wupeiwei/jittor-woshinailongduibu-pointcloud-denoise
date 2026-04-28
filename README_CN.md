@@ -1,6 +1,6 @@
 # jittor-woshinailongduibu-pointcloud-denoise 中文说明
 
-本仓库是 **计图 Jittor 点云降噪正式赛** 的代码仓库。
+本仓库是 **计图 Jittor 点云降噪正式赛** 的代码仓库，包含“我是奶龙对不”战队提出的 **PW-SENEL / ST-AAS** 边缘保持点云降噪模块。
 
 - 战队名：我是奶龙对不
 - GitHub 账号：`wupeiwei`
@@ -34,6 +34,8 @@ pred_clean = noisy + offset
 
 ### 2.2 PW-SENEL 模块
 
+**PW-SENEL 是“我是奶龙对不”战队在本项目中提出的边缘保持点云降噪模块。**
+
 PW-SENEL 全称：
 
 ```text
@@ -49,7 +51,8 @@ PeiWei Softmax Edge-aware Noise Elimination and Locking
 核心思想：
 
 - 使用 softmax / attention 风格的邻域加权来弱化疑似噪声点
-- 使用局部边缘响应来保护棱角、尖锐区域，避免过度平滑
+- 使用边缘感知结构锁定来保护棱角、尖锐区域，避免过度平滑
+- 在降噪时尽量保留局部几何细节
 
 该模块目前作为可开关 ablation 实现，方便与 baseline 对比。
 
@@ -67,7 +70,7 @@ Structure Tensor-guided Adaptive Softmax
 结构张量引导的自适应 Softmax 降噪
 ```
 
-它是从 PW-SENEL 思路进一步收敛出来的轻量几何分支。
+**ST-AAS v0 是“我是奶龙对不”战队基于 PW-SENEL 思路进一步提出的轻量几何实现。**
 
 核心流程：
 
@@ -286,7 +289,24 @@ jittor-woshinailongduibu-pointcloud-denoise
 我是奶龙对不
 ```
 
-## 11. 致谢
+## 11. 许可证与引用
+
+本项目采用 Apache License 2.0 开源，详见：
+
+```text
+LICENSE
+NOTICE
+```
+
+PW-SENEL 与 ST-AAS 是“我是奶龙对不”战队 / wupeiwei 在本项目中的原创竞赛贡献。若复用、修改或二次开发相关模块，请保留署名信息，并引用本仓库。引用信息见：
+
+```text
+CITATION.cff
+```
+
+开源代码不等于放弃商业化权利。后续增强版、工程部署版、模型服务、咨询服务等仍可独立商业化。
+
+## 12. 致谢
 
 感谢：
 
