@@ -113,6 +113,8 @@ pred_i = p_i + (1 - edge_conf_i) * (smooth_i - p_i)
 │   └── check_data.py                # 数据检查
 ├── starter_code/                    # 官方 starter code，尽量保持独立
 ├── docs/
+│   ├── REPOSITORY_STRUCTURE.md       # 仓库结构与复现边界说明
+│   ├── REPOSITORY_STRUCTURE_CN.md    # 中文仓库结构与复现边界说明
 │   ├── GPU_PROFILES.md              # 不同显卡配置说明
 │   └── ST_AAS_CVMJ_PLAN.md          # ST-AAS 设计文档
 ├── README.md                        # 英文说明
@@ -248,6 +250,7 @@ source scripts/env.sh
 更详细的复现流程请看：
 
 - `README_REPRODUCE.md`
+- `docs/REPOSITORY_STRUCTURE_CN.md`
 - `docs/GPU_PROFILES.md`
 - `docs/ST_AAS_CVMJ_PLAN.md`
 

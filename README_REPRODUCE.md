@@ -2,6 +2,8 @@
 
 目标：说明如何在配置好依赖和数据后复现本项目代码，并区分通用复现步骤与作者本人的实际实验流程。
 
+仓库结构和复现边界详见：`docs/REPOSITORY_STRUCTURE_CN.md` / `docs/REPOSITORY_STRUCTURE.md`。
+
 ## 目录约定
 
 ```text

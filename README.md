@@ -68,6 +68,8 @@ This design targets lightweight, interpretable, edge-preserving denoising with l
 │   └── check_data.py                # dataset check
 ├── starter_code/                    # official starter code, kept mostly unchanged
 ├── docs/
+│   ├── REPOSITORY_STRUCTURE.md    # reproduction boundary and file roles
+│   ├── REPOSITORY_STRUCTURE_CN.md # 中文仓库结构与复现边界
 │   ├── GPU_PROFILES.md
 │   └── ST_AAS_CVMJ_PLAN.md
 ├── README_REPRODUCE.md              # detailed reproduction notes
@@ -210,6 +212,7 @@ source scripts/env.sh
 Each wrapper run saves run metadata, config/profile information, and logs under the experiment directory. See:
 
 - `README_REPRODUCE.md`
+- `docs/REPOSITORY_STRUCTURE.md`
 - `docs/GPU_PROFILES.md`
 
 Important environment convention:
