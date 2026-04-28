@@ -85,7 +85,6 @@ These scripts are useful for debugging, environment recording, offline dependenc
 
 ```text
 docs/GPU_PROFILES.md
-docs/ST_AAS_CVMJ_PLAN.md
 OPEN_SOURCE.md
 LICENSE
 NOTICE
@@ -93,7 +92,6 @@ CITATION.cff
 ```
 
 - `docs/GPU_PROFILES.md`: explains the profile mechanism and author hardware examples.
-- `docs/ST_AAS_CVMJ_PLAN.md`: design notes for future ST-AAS development.
 - `LICENSE`, `NOTICE`, `CITATION.cff`: license, attribution, and citation metadata.
 
 ## 7. Files intentionally excluded from git

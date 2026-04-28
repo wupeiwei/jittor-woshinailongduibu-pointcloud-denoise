@@ -70,8 +70,7 @@ This design targets lightweight, interpretable, edge-preserving denoising with l
 ├── docs/
 │   ├── REPOSITORY_STRUCTURE.md    # English repository structure and reproduction boundary
 │   ├── REPOSITORY_STRUCTURE_CN.md # Chinese repository structure and reproduction boundary
-│   ├── GPU_PROFILES.md
-│   └── ST_AAS_CVMJ_PLAN.md
+│   └── GPU_PROFILES.md
 ├── README_REPRODUCE.md              # detailed reproduction notes
 ├── requirements.txt
 └── .gitignore

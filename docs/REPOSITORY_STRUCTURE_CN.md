@@ -89,7 +89,6 @@ scripts/make_wheelhouse.sh
 
 ```text
 docs/GPU_PROFILES.md
-docs/ST_AAS_CVMJ_PLAN.md
 OPEN_SOURCE.md
 LICENSE
 NOTICE
@@ -99,7 +98,6 @@ CITATION.cff
 说明：
 
 - `docs/GPU_PROFILES.md`：解释 profile 机制和作者硬件示例
-- `docs/ST_AAS_CVMJ_PLAN.md`：ST-AAS 后续设计笔记
 - `LICENSE` / `NOTICE` / `CITATION.cff`：许可证、署名和引用信息
 
 ## 7. 明确不应上传的内容
