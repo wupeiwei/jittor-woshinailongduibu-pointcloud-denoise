@@ -106,7 +106,7 @@ The `.gitignore` file has been prepared for this.
 
 ## License and Attribution
 
-This formal-track repository uses Apache License 2.0. The PW-SENEL and ST-AAS modules are proposed by Team 我是奶龙对不 / wupeiwei. Please keep attribution notices and cite the repository when reusing or modifying these modules. See `NOTICE` and `CITATION.cff`.
+This formal-track repository uses Apache License 2.0. The PW-SENEL and ST-AAS modules are proposed by wupeiwei (小冷). The team name 我是奶龙对不 is used only as the competition team identifier. Please keep attribution notices and cite the repository when reusing or modifying these modules. See `NOTICE` and `CITATION.cff`.
 
 Commercial use is not forbidden by this open-source release, but attribution and license terms must be respected. Enhanced industrial versions, trained models, deployment services, and consulting can be maintained separately from the public competition repository.
 

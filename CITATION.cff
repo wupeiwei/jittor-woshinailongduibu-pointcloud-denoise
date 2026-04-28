@@ -4,7 +4,7 @@ message: "If you use the PW-SENEL or ST-AAS modules from this repository, please
 type: software
 authors:
   - name: "wupeiwei"
-    affiliation: "Team 我是奶龙对不"
+    affiliation: "Individual author; competition team name: 我是奶龙对不"
 repository-code: "https://gitee.com/wpwwgw/jittor-woshinailongduibu-pointcloud-denoise"
 abstract: "Jittor implementation for point cloud denoising with the proposed PW-SENEL and ST-AAS modules for edge-preserving noise suppression."
 keywords:

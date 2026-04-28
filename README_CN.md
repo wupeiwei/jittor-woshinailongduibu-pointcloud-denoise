@@ -1,6 +1,6 @@
 # jittor-woshinailongduibu-pointcloud-denoise 中文说明
 
-本仓库是 **计图 Jittor 点云降噪正式赛** 的代码仓库，包含“我是奶龙对不”战队提出的 **PW-SENEL / ST-AAS** 边缘保持点云降噪模块。
+本仓库是 **计图 Jittor 点云降噪正式赛** 的代码仓库，包含由 **wupeiwei（小冷）本人提出** 的 **PW-SENEL / ST-AAS** 边缘保持点云降噪模块。
 
 - 战队名：我是奶龙对不
 - GitHub 账号：`wupeiwei`
@@ -34,7 +34,7 @@ pred_clean = noisy + offset
 
 ### 2.2 PW-SENEL 模块
 
-**PW-SENEL 是“我是奶龙对不”战队在本项目中提出的边缘保持点云降噪模块。**
+**PW-SENEL 是 wupeiwei（小冷）本人在本项目中提出的边缘保持点云降噪模块。**
 
 PW-SENEL 全称：
 
@@ -70,7 +70,7 @@ Structure Tensor-guided Adaptive Softmax
 结构张量引导的自适应 Softmax 降噪
 ```
 
-**ST-AAS v0 是“我是奶龙对不”战队基于 PW-SENEL 思路进一步提出的轻量几何实现。**
+**ST-AAS v0 是 wupeiwei（小冷）本人基于 PW-SENEL 思路进一步提出的轻量几何实现。**
 
 核心流程：
 
@@ -298,7 +298,7 @@ LICENSE
 NOTICE
 ```
 
-PW-SENEL 与 ST-AAS 是“我是奶龙对不”战队 / wupeiwei 在本项目中的原创竞赛贡献。若复用、修改或二次开发相关模块，请保留署名信息，并引用本仓库。引用信息见：
+PW-SENEL 与 ST-AAS 是 wupeiwei（小冷）本人在本项目中的原创竞赛贡献；“我是奶龙对不”仅作为参赛队伍名称。若复用、修改或二次开发相关模块，请保留署名信息，并引用本仓库。引用信息见：
 
 ```text
 CITATION.cff

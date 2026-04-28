@@ -2,7 +2,7 @@
 
 Jittor implementation for point cloud denoising in the Jittor point cloud competition formal track.
 
-This repository contains a reproducible denoising baseline and the **PW-SENEL / ST-AAS** modules proposed by **Team 我是奶龙对不** for edge-preserving point cloud denoising.
+This repository contains a reproducible denoising baseline and the **PW-SENEL / ST-AAS** modules proposed by **wupeiwei (小冷)** for edge-preserving point cloud denoising.
 
 - Team name: 我是奶龙对不
 - Author / GitHub account: wupeiwei
@@ -29,14 +29,14 @@ Current optional modules:
    - Chamfer-style auxiliary loss support
 
 2. **PW-SENEL**
-   - **Proposed by Team 我是奶龙对不 in this project**
+   - **Proposed by wupeiwei (小冷) in this project**
    - Full name: PeiWei Softmax Edge-aware Noise Elimination and Locking
    - Core idea: softmax-based neighborhood noise suppression + edge-aware structure locking
    - Designed to suppress noise while preserving sharp edges and local geometric details
    - Implemented as a switchable ablation module
 
 3. **ST-AAS v0**
-   - **Proposed by Team 我是奶龙对不 as a lightweight geometric realization derived from the PW-SENEL idea**
+   - **Proposed by wupeiwei (小冷) as a lightweight geometric realization derived from the PW-SENEL idea**
    - Full name: Structure Tensor-guided Adaptive Softmax
    - Single KNN neighborhood
    - Density-adaptive softmax temperature
@@ -235,7 +235,7 @@ Do not commit:
 
 This project is released under the Apache License 2.0. See `LICENSE` and `NOTICE`.
 
-The proposed PW-SENEL and ST-AAS modules are original competition contributions by Team 我是奶龙对不 / wupeiwei. If you reuse or modify these modules, please retain the attribution notice and cite this repository. See `CITATION.cff`.
+The proposed PW-SENEL and ST-AAS modules are original competition contributions by wupeiwei (小冷). The team name 我是奶龙对不 is used as the competition team identifier. If you reuse or modify these modules, please retain the attribution notice and cite this repository. See `CITATION.cff`.
 
 ## 10. Acknowledgments
 

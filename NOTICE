@@ -1,7 +1,7 @@
 Apache-2.0 applies to this project.
 
-Copyright 2026 Team 我是奶龙对不 / wupeiwei.
+Copyright 2026 wupeiwei (小冷). Team name: 我是奶龙对不.
 
-This repository contains the proposed PW-SENEL and ST-AAS modules by Team 我是奶龙对不 for edge-preserving point cloud denoising in the Jittor point cloud competition.
+This repository contains the proposed PW-SENEL and ST-AAS modules by wupeiwei (小冷) for edge-preserving point cloud denoising in the Jittor point cloud competition.
 
 Please retain this NOTICE file and cite the repository when reusing or modifying the proposed modules.
