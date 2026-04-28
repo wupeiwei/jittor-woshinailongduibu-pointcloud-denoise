@@ -1,0 +1,20 @@
+# NVIDIA RTX A6000 profile.
+# Purpose: large-scale formal training and final ablations.
+# A6000 usually has 48GB VRAM, so we can increase num_points/batch_size.
+# For two A6000 cards, start with single-card reproducibility first, then add distributed/parallel training.
+
+train:
+  steps: 20000
+  limit: 0
+  num_points: 8192
+  batch_size: 8
+  log_every: 20
+  save_every: 1000
+
+model:
+  k: 20
+  feat_dim: 256
+  hidden: 256
+
+predict:
+  patch_size: 8000

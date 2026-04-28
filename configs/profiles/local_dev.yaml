@@ -1,0 +1,18 @@
+# Local development profile.
+# Purpose: code smoke tests, debugging, quick data checks. Not for final training.
+
+train:
+  steps: 200
+  limit: 100
+  num_points: 1024
+  batch_size: 1
+  log_every: 10
+  save_every: 100
+
+model:
+  k: 12
+  feat_dim: 128
+  hidden: 128
+
+predict:
+  patch_size: 1000

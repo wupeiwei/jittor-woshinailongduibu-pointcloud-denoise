@@ -1,0 +1,19 @@
+# RTX 5060 Ti profile.
+# Purpose: medium-scale experiments, ablations, sanity runs before A6000.
+# Adjust batch_size / num_points downward if VRAM is 8GB; 16GB models can try larger values.
+
+train:
+  steps: 8000
+  limit: 5000
+  num_points: 4096
+  batch_size: 2
+  log_every: 20
+  save_every: 500
+
+model:
+  k: 16
+  feat_dim: 256
+  hidden: 256
+
+predict:
+  patch_size: 2000

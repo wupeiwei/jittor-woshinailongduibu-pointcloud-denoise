@@ -1,0 +1,36 @@
+# Minimal smoke-test config: fast path check only, NOT for scoring.
+# Uses point-wise MSE only to verify env/data/model/logging/ckpt quickly.
+
+experiment:
+  name: denoise_smoke
+  seed: 123
+
+paths:
+  data_root: /home/sallen/jittor-pointcloud-denoise/dataset_train
+  test_root: /home/sallen/jittor-pointcloud-denoise/dataset_test_noisy
+  train_list: /home/sallen/jittor-pointcloud-denoise/starter_code/datalist/train.txt
+  out_dir: /home/sallen/jittor-pointcloud-denoise/results/denoise_smoke
+  zip: /home/sallen/jittor-pointcloud-denoise/result_denoise_smoke.zip
+  ckpt: /home/sallen/jittor-pointcloud-denoise/experiments/denoise_smoke/smoke.pkl
+
+train:
+  steps: 20
+  limit: 20
+  num_points: 512
+  batch_size: 1
+  lr: 0.0001
+  noise_min: 0.005
+  noise_max: 0.02
+  cd_weight: 0.0
+  log_every: 1
+  save_every: 20
+
+model:
+  k: 16
+  feat_dim: 128
+  hidden: 128
+  pwsenel: false
+
+predict:
+  limit: 1
+  patch_size: 1000

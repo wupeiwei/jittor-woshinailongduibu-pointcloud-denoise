@@ -1,0 +1,71 @@
+# Python / cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments / local toolchains
+.venv/
+venv/
+env/
+starter_code/.venv/
+# Keep the lightweight gcc10 wrapper scripts versioned if present.
+# Do not commit full compiler installations.
+
+# Jittor / CUDA build caches
+.jittor/
+.cache/
+*.o
+*.so
+*.dll
+*.dylib
+
+# Dataset directories / symlinks: keep data off git
+/dataset_train
+/dataset_test_noisy
+/starter_code/dataset_train
+/starter_code/dataset_test_noisy
+/data/
+/raw_data/
+
+# Experiment outputs / checkpoints / submissions
+/experiments/
+/results/
+/runs/
+/logs/
+*.pkl
+*.pth
+*.pt
+*.ckpt
+*.npz
+*.npy
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.rar
+*.train.csv
+training_log.csv
+training_curve.png
+result.json
+
+# Local run timestamps / scratch
+.run_*
+*.log
+/tmp/
+/scratch/
+=
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Secrets
+.env
+*.key
+*.pem
+*.token
