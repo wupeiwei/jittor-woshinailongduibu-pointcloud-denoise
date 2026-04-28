@@ -115,7 +115,7 @@ Commercial use is not forbidden by this open-source release, but attribution and
 From the project root:
 
 ```bash
-cd /home/sallen/jittor-pointcloud-denoise
+cd /path/to/jittor-pointcloud-denoise
 git init
 git branch -M main
 ```

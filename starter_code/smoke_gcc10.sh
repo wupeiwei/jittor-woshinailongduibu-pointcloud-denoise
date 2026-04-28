@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd /home/sallen/jittor-pointcloud-denoise/starter_code
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 mkdir -p .toolchain-gcc10
 ln -sfn /usr/bin/gcc-10 .toolchain-gcc10/gcc
 ln -sfn /usr/bin/g++-10 .toolchain-gcc10/g++
@@ -10,7 +11,7 @@ export PATH="$PWD/.toolchain-gcc10:$PATH"
 export CC=gcc
 export CXX=g++
 export DISABLE_MULTIPROCESSING=1
-rm -rf /home/sallen/.cache/jittor/jt1.3.10/g++13.3.0/py3.12.3 || true
+rm -rf "${HOME}/.cache/jittor/jt1.3.10/g++13.3.0/py3.12.3" || true
 source .venv/bin/activate
 printf '== compiler ==\n'
 which gcc; gcc --version | head -1

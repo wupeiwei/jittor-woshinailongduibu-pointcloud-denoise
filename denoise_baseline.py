@@ -620,6 +620,12 @@ def apply_config(args):
 
     for key, value in overrides.items():
         setattr(args, key, value)
+
+    # Resolve repository-relative paths so configs remain portable across machines.
+    for key in ["data_root", "test_root", "train_list", "out_dir", "zip", "ckpt"]:
+        value = getattr(args, key)
+        if value and not Path(value).is_absolute():
+            setattr(args, key, str(ROOT / value))
     return args
 
 
@@ -629,12 +635,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--profile", action="append", default=[], help="Optional YAML profile override; can be used multiple times")
     p.add_argument("--experiment-name", default="manual")
     p.add_argument("--mode", choices=["train", "predict", "zip", "validate-zip"], default="train")
-    p.add_argument("--data-root", default="/home/sallen/jittor-pointcloud-denoise/dataset_train")
-    p.add_argument("--test-root", default="/home/sallen/jittor-pointcloud-denoise/dataset_test_noisy")
-    p.add_argument("--train-list", default="/home/sallen/jittor-pointcloud-denoise/starter_code/datalist/train.txt")
-    p.add_argument("--out-dir", default="/home/sallen/jittor-pointcloud-denoise/results/denoise_baseline")
-    p.add_argument("--zip", default="/home/sallen/jittor-pointcloud-denoise/result_denoise_baseline.zip")
-    p.add_argument("--ckpt", default="/home/sallen/jittor-pointcloud-denoise/experiments/denoise_baseline/best.pkl")
+    p.add_argument("--data-root", default="dataset_train")
+    p.add_argument("--test-root", default="dataset_test_noisy")
+    p.add_argument("--train-list", default="starter_code/datalist/train.txt")
+    p.add_argument("--out-dir", default="results/denoise_baseline")
+    p.add_argument("--zip", default="result_denoise_baseline.zip")
+    p.add_argument("--ckpt", default="experiments/denoise_baseline/best.pkl")
     p.add_argument("--num-points", type=int, default=2048)
     p.add_argument("--batch-size", type=int, default=2)
     p.add_argument("--steps", type=int, default=1000)

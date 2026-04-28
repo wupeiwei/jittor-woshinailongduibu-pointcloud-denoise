@@ -6,12 +6,12 @@ experiment:
   seed: 123
 
 paths:
-  data_root: /home/sallen/jittor-pointcloud-denoise/dataset_train
-  test_root: /home/sallen/jittor-pointcloud-denoise/dataset_test_noisy
-  train_list: /home/sallen/jittor-pointcloud-denoise/starter_code/datalist/train.txt
-  out_dir: /home/sallen/jittor-pointcloud-denoise/results/denoise_smoke
-  zip: /home/sallen/jittor-pointcloud-denoise/result_denoise_smoke.zip
-  ckpt: /home/sallen/jittor-pointcloud-denoise/experiments/denoise_smoke/smoke.pkl
+  data_root: dataset_train
+  test_root: dataset_test_noisy
+  train_list: starter_code/datalist/train.txt
+  out_dir: results/denoise_smoke
+  zip: result_denoise_smoke.zip
+  ckpt: experiments/denoise_smoke/smoke.pkl
 
 train:
   steps: 20

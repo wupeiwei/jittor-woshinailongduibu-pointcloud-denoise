@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd /home/sallen/jittor-pointcloud-denoise/starter_code
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 mkdir -p .toolchain-gcc10
 ln -sfn /usr/bin/gcc-10 .toolchain-gcc10/gcc
 ln -sfn /usr/bin/g++-10 .toolchain-gcc10/g++

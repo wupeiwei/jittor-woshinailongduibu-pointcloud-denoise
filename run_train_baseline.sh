@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd /home/sallen/jittor-pointcloud-denoise
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+cd "$PROJECT_ROOT"
 
 export PATH="$PWD/starter_code/.toolchain-gcc10:$PATH"
 export CC=gcc

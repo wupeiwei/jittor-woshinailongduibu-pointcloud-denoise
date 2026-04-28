@@ -7,12 +7,12 @@ experiment:
   seed: 123
 
 paths:
-  data_root: /home/sallen/jittor-pointcloud-denoise/dataset_train
-  test_root: /home/sallen/jittor-pointcloud-denoise/dataset_test_noisy
-  train_list: /home/sallen/jittor-pointcloud-denoise/starter_code/datalist/train.txt
-  out_dir: /home/sallen/jittor-pointcloud-denoise/results/denoise_staas_v0
-  zip: /home/sallen/jittor-pointcloud-denoise/result_denoise_staas_v0.zip
-  ckpt: /home/sallen/jittor-pointcloud-denoise/experiments/denoise_staas_v0/staas_v0.pkl
+  data_root: dataset_train
+  test_root: dataset_test_noisy
+  train_list: starter_code/datalist/train.txt
+  out_dir: results/denoise_staas_v0
+  zip: result_denoise_staas_v0.zip
+  ckpt: experiments/denoise_staas_v0/staas_v0.pkl
 
 train:
   steps: 5000

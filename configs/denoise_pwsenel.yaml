@@ -7,12 +7,12 @@ experiment:
   seed: 123
 
 paths:
-  data_root: /home/sallen/jittor-pointcloud-denoise/dataset_train
-  test_root: /home/sallen/jittor-pointcloud-denoise/dataset_test_noisy
-  train_list: /home/sallen/jittor-pointcloud-denoise/starter_code/datalist/train.txt
-  out_dir: /home/sallen/jittor-pointcloud-denoise/results/denoise_pwsenel
-  zip: /home/sallen/jittor-pointcloud-denoise/result_denoise_pwsenel.zip
-  ckpt: /home/sallen/jittor-pointcloud-denoise/experiments/denoise_pwsenel/pwsenel.pkl
+  data_root: dataset_train
+  test_root: dataset_test_noisy
+  train_list: starter_code/datalist/train.txt
+  out_dir: results/denoise_pwsenel
+  zip: result_denoise_pwsenel.zip
+  ckpt: experiments/denoise_pwsenel/pwsenel.pkl
 
 train:
   steps: 5000

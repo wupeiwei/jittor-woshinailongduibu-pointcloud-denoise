@@ -69,3 +69,6 @@ Thumbs.db
 *.key
 *.pem
 *.token
+
+# Local compiler wrapper links
+starter_code/.toolchain-gcc10/
