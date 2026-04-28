@@ -68,8 +68,8 @@ This design targets lightweight, interpretable, edge-preserving denoising with l
 │   └── check_data.py                # dataset check
 ├── starter_code/                    # official starter code, kept mostly unchanged
 ├── docs/
-│   ├── REPOSITORY_STRUCTURE.md    # reproduction boundary and file roles
-│   ├── REPOSITORY_STRUCTURE_CN.md # 中文仓库结构与复现边界
+│   ├── REPOSITORY_STRUCTURE.md    # English repository structure and reproduction boundary
+│   ├── REPOSITORY_STRUCTURE_CN.md # Chinese repository structure and reproduction boundary
 │   ├── GPU_PROFILES.md
 │   └── ST_AAS_CVMJ_PLAN.md
 ├── README_REPRODUCE.md              # detailed reproduction notes
