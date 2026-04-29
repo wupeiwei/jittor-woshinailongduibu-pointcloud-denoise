@@ -78,7 +78,7 @@ def main() -> None:
     # CuPy is not optional for CUDA Jittor training on the target machines.
     require_module(
         "cupy",
-        "Install with: $PYTHON -m pip install 'cupy-cuda12x>=13.0,<14.0' "
+        "Install with: python -m pip install 'cupy-cuda12x>=13.0,<14.0' "
         "or use PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple bash scripts/install_deps.sh",
     )
     import cupy as cp
