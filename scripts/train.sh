@@ -18,6 +18,9 @@ mkdir -p "$RUN_DIR"
 cp "$CONFIG" "$RUN_DIR/config.yaml"
 if [ -n "$PROFILE" ]; then cp "$PROFILE" "$RUN_DIR/profile.yaml"; fi
 "$PYTHON" scripts/check_env.py > "$RUN_DIR/env.txt" 2>&1 || { cat "$RUN_DIR/env.txt"; exit 1; }
+DATA_ARGS=(--config "$CONFIG" --limit 3)
+if [ -n "$PROFILE" ]; then DATA_ARGS+=(--profile "$PROFILE"); fi
+"$PYTHON" scripts/check_data.py "${DATA_ARGS[@]}" > "$RUN_DIR/data.txt" 2>&1 || { cat "$RUN_DIR/data.txt"; exit 1; }
 EXTRA_ARGS=()
 if [ -n "$PROFILE" ]; then EXTRA_ARGS+=(--profile "$PROFILE"); fi
 {
