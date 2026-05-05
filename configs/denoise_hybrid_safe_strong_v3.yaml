@@ -1,0 +1,52 @@
+experiment:
+  name: denoise_hybrid_safe_strong_v3
+  seed: 123
+
+paths:
+  data_root: dataset_train
+  test_root: dataset_test_noisy
+  train_list: starter_code/datalist/train.txt
+  out_dir: results/denoise_hybrid_safe_strong_v3
+  zip: result_denoise_hybrid_safe_strong_v3.zip
+  ckpt: experiments/denoise_hybrid_safe_strong_v3/hybrid_safe_strong_v3.pkl
+
+train:
+  steps: 5000
+  limit: 0
+  num_points: 2048
+  batch_size: 2
+  lr: 0.0001
+  noise_min: 0.005
+  noise_max: 0.02
+  cd_weight: 0.1
+  log_every: 20
+  save_every: 500
+
+model:
+  k: 16
+  feat_dim: 256
+  hidden: 256
+  pwsenel: false
+  pwsenel_v2: true
+  pwsenel_v2_edge_lock: 0.2
+  pwsenel_v2_gate_scale: 1.0
+  move_gate: true
+  hybrid_safe_strong: true
+  hybrid_router_scale: 4.0
+  residual_clip: 0.0
+  adaptive_clip: true
+  adaptive_clip_min: 0.006
+  adaptive_clip_mid: 0.014
+  adaptive_clip_max: 0.045
+  adaptive_clip_ref_low: 0.022
+  adaptive_clip_ref_mid: 0.026
+  adaptive_clip_ref_high: 0.034
+  staas: false
+  staas_strength: 1.0
+  staas_tau0: 0.02
+  staas_tau_min: 0.005
+  staas_tau_max: 0.08
+
+predict:
+  limit: 0
+  patch_size: 1000

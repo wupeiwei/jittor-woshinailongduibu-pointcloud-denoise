@@ -2,6 +2,11 @@
 set -euo pipefail
 CONFIG="${1:-configs/denoise_baseline.yaml}"
 PROFILE="${2:-}"
+shift $(( $# >= 1 ? 1 : 0 ))
+if [ -n "$PROFILE" ]; then
+  shift $(( $# >= 1 ? 1 : 0 ))
+fi
+USER_ARGS=("$@")
 PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$PROJECT_ROOT"
 source scripts/env.sh
@@ -28,11 +33,11 @@ if [ -n "$PROFILE" ]; then EXTRA_ARGS+=(--profile "$PROFILE"); fi
   echo "profile: ${PROFILE:-none}"
   echo "run_dir: $RUN_DIR"
   echo "python: $PYTHON"
-  echo "command: \"$PYTHON\" denoise_baseline.py --config $CONFIG ${EXTRA_ARGS[*]:-} --mode train"
+  echo "command: \"$PYTHON\" denoise_baseline.py --config $CONFIG ${EXTRA_ARGS[*]:-} --mode train ${USER_ARGS[*]:-}"
   echo "date: $(date -Is)"
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git status --short || true
 } > "$RUN_DIR/meta.txt"
 
-"$PYTHON" denoise_baseline.py --config "$CONFIG" "${EXTRA_ARGS[@]}" --mode train 2>&1 | tee "$RUN_DIR/train.log"
+"$PYTHON" denoise_baseline.py --config "$CONFIG" "${EXTRA_ARGS[@]}" --mode train "${USER_ARGS[@]}" 2>&1 | tee "$RUN_DIR/train.log"
 cp "$CONFIG" "$RUN_DIR/config.final.yaml"
 echo "$RUN_DIR"

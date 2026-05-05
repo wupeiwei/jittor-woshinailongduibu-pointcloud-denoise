@@ -1,0 +1,67 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "check env",
+      "type": "shell",
+      "command": "source scripts/env.sh && $PYTHON scripts/check_env.py",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "DISABLE_MULTIPROCESSING": "1"
+        }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "check data a6000",
+      "type": "shell",
+      "command": "source scripts/env.sh && $PYTHON scripts/check_data.py --config configs/denoise_baseline.yaml --profile configs/profiles/a6000.yaml --limit 5",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "DISABLE_MULTIPROCESSING": "1"
+        }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "train baseline a6000",
+      "type": "shell",
+      "command": "bash scripts/train.sh configs/denoise_baseline.yaml configs/profiles/a6000.yaml",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "DISABLE_MULTIPROCESSING": "1"
+        }
+      },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "train adaptive_clip a6000",
+      "type": "shell",
+      "command": "bash scripts/train.sh configs/denoise_pwsenel_v2_adaptive_clip.yaml configs/profiles/a6000.yaml",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "DISABLE_MULTIPROCESSING": "1"
+        }
+      },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "evaluate adaptive_clip low/mid/high",
+      "type": "shell",
+      "command": "set -e; for band in low mid high; do case $band in low) nmin=0.005; nmax=0.010 ;; mid) nmin=0.010; nmax=0.020 ;; high) nmin=0.020; nmax=0.040 ;; esac; echo === $band $nmin-$nmax ===; source scripts/env.sh && $PYTHON scripts/evaluate_cd.py --config configs/denoise_pwsenel_v2_adaptive_clip.yaml --profile configs/profiles/a6000.yaml --ckpt experiments/denoise_pwsenel_v2_adaptive_clip/pwsenel_v2_adaptive_clip.pkl --out experiments/eval_cd_pwsenel_v2_adaptive_clip_128_noise_${band}.csv --limit 128 --noise-min $nmin --noise-max $nmax; done",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "DISABLE_MULTIPROCESSING": "1"
+        }
+      },
+      "problemMatcher": []
+    }
+  ]
+}

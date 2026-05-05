@@ -61,7 +61,10 @@ result.json
 # OS / editor
 .DS_Store
 Thumbs.db
-.vscode/
+# Keep shared VSCode project/tasks settings versioned for A6000 Remote-SSH.
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
 .idea/
 
 # Secrets

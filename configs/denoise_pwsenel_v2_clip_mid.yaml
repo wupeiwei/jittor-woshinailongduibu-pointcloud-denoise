@@ -1,0 +1,43 @@
+experiment:
+  name: denoise_pwsenel_v2_clip_mid
+  seed: 123
+
+paths:
+  data_root: dataset_train
+  test_root: dataset_test_noisy
+  train_list: starter_code/datalist/train.txt
+  out_dir: results/denoise_pwsenel_v2_clip_mid
+  zip: result_denoise_pwsenel_v2_clip_mid.zip
+  ckpt: experiments/denoise_pwsenel_v2_clip_mid/pwsenel_v2_clip_mid.pkl
+
+train:
+  steps: 5000
+  limit: 0
+  num_points: 2048
+  batch_size: 2
+  lr: 0.0001
+  noise_min: 0.005
+  noise_max: 0.02
+  cd_weight: 0.1
+  log_every: 20
+  save_every: 500
+
+model:
+  k: 16
+  feat_dim: 256
+  hidden: 256
+  pwsenel: false
+  pwsenel_v2: true
+  pwsenel_v2_edge_lock: 0.6
+  pwsenel_v2_gate_scale: 0.3
+  residual_clip: 0.008
+  staas: false
+  move_gate: false
+  staas_strength: 1.0
+  staas_tau0: 0.02
+  staas_tau_min: 0.005
+  staas_tau_max: 0.08
+
+predict:
+  patch_size: 1000
+  limit: 0

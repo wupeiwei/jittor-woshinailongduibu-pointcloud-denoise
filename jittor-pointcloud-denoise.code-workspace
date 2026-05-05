@@ -1,0 +1,19 @@
+{
+  "folders": [
+    {
+      "name": "jittor-pointcloud-denoise",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "terminal.integrated.cwd": "${workspaceFolder:jittor-pointcloud-denoise}",
+    "python.defaultInterpreterPath": "${workspaceFolder:jittor-pointcloud-denoise}/starter_code/.venv/bin/python"
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-python.python",
+      "ms-python.vscode-pylance",
+      "ms-toolsai.jupyter"
+    ]
+  }
+}

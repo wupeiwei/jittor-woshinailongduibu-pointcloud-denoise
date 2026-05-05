@@ -1,0 +1,35 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/starter_code/.venv/bin/python",
+  "python.terminal.activateEnvironment": true,
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}",
+    "${workspaceFolder}/starter_code"
+  ],
+  "python.analysis.typeCheckingMode": "basic",
+  "terminal.integrated.cwd": "${workspaceFolder}",
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/.mypy_cache": true,
+    "**/.ruff_cache": true
+  },
+  "search.exclude": {
+    "**/.venv": true,
+    "**/starter_code/.venv": true,
+    "**/experiments": true,
+    "**/results": true,
+    "**/logs": true,
+    "**/dataset_train": true,
+    "**/dataset_test_noisy": true,
+    "**/__pycache__": true
+  },
+  "files.watcherExclude": {
+    "**/.venv/**": true,
+    "**/starter_code/.venv/**": true,
+    "**/experiments/**": true,
+    "**/results/**": true,
+    "**/logs/**": true,
+    "**/dataset_train/**": true,
+    "**/dataset_test_noisy/**": true
+  }
+}

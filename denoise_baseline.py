@@ -213,6 +213,66 @@ class PWSENEL(nn.Module):
         return feat + fused
 
 
+class PWSENELv2Gate(nn.Module):
+    """PW-SENEL v2 gate: explicit noise confidence and edge locking.
+
+    It keeps the original offset head unchanged and only gates its movement:
+    move_gate = noise_conf * (1 - edge_lock_strength * edge_conf)
+    where:
+    - noise_conf learns which points deserve stronger denoising;
+    - edge_conf uses MaxPool-style local geometry responses to lock sharp structures.
+    """
+
+    def __init__(self, channels: int, k: int = 16, edge_lock_strength: float = 0.7, gate_scale: float = 0.5):
+        super().__init__()
+        self.k = k
+        self.edge_lock_strength = edge_lock_strength
+        self.gate_scale = gate_scale
+        self.noise_mlp = nn.Sequential(
+            nn.Linear(channels * 2 + 4, channels // 2),
+            nn.ReLU(),
+            nn.Linear(channels // 2, 1),
+        )
+        self.edge_mlp = nn.Sequential(
+            nn.Linear(channels * 2 + 4, channels // 2),
+            nn.ReLU(),
+            nn.Linear(channels // 2, 1),
+        )
+
+    def gather_neighbors(self, x: jt.Var, idx: jt.Var) -> jt.Var:
+        B, N, C = x.shape
+        base = (jt.arange(B) * N).reshape(B, 1, 1)
+        flat_idx = (idx + base).reshape(-1)
+        flat = x.reshape(B * N, C)
+        return flat[flat_idx].reshape(B, N, idx.shape[-1], C)
+
+    def execute(self, feat: jt.Var, points: jt.Var, return_stats: bool = False):
+        B, N, C = feat.shape
+        idx = get_knn_idx(points, points, self.k + 1)[:, :, 1:]
+        neigh_feat = self.gather_neighbors(feat, idx)
+        neigh_pts = self.gather_neighbors(points, idx)
+        center_feat = feat.unsqueeze(2).broadcast((B, N, self.k, C))
+        center_pts = points.unsqueeze(2).broadcast((B, N, self.k, 3))
+        rel = neigh_pts - center_pts
+        dist = ((rel ** 2).sum(dim=-1, keepdims=True) + 1e-12) ** 0.5
+        gate_input = jt.concat([center_feat, neigh_feat - center_feat, rel, dist], dim=-1)
+        flat = gate_input.reshape(B * N * self.k, -1)
+
+        noise_score = self.noise_mlp(flat).reshape(B, N, self.k, 1)
+        noise_weight = nn.softmax(noise_score, dim=2)
+        noise_conf = (noise_weight * dist).sum(dim=2)
+        noise_conf = jt.sigmoid(noise_conf / (dist.mean() + 1e-6))
+
+        edge_score = self.edge_mlp(flat).reshape(B, N, self.k, 1)
+        edge_conf = jt.sigmoid(jt.max(edge_score, dim=2))
+
+        move_gate = self.gate_scale * noise_conf * (1.0 - self.edge_lock_strength * edge_conf)
+        move_gate = jt.clamp(move_gate, 0.0, 1.0)
+        if return_stats:
+            return move_gate, {"noise_conf": noise_conf, "edge_conf": edge_conf, "move_gate": move_gate}
+        return move_gate
+
+
 class STAASv0(nn.Module):
     """ST-AAS v0: Structure Tensor-guided Adaptive Softmax.
 
@@ -315,14 +375,55 @@ class ResidualDenoiser(nn.Module):
         staas_tau0: float = 0.02,
         staas_tau_min: float = 0.005,
         staas_tau_max: float = 0.08,
+        use_move_gate: bool = False,
+        use_pwsenel_v2: bool = False,
+        pwsenel_v2_edge_lock: float = 0.7,
+        pwsenel_v2_gate_scale: float = 0.5,
+        residual_clip: float = 0.0,
+        adaptive_clip: bool = False,
+        adaptive_clip_min: float = 0.006,
+        adaptive_clip_max: float = 0.020,
+        adaptive_clip_ref_low: float = 0.022,
+        adaptive_clip_ref_mid: float = 0.030,
+        adaptive_clip_ref_high: float = 0.040,
+        adaptive_clip_mid: float = 0.010,
+        noise_aware_move_gate: bool = False,
+        noise_aware_gate_min: float = 0.45,
+        noise_aware_gate_ref_low: float = 0.022,
+        noise_aware_gate_ref_high: float = 0.036,
+        hybrid_safe_strong: bool = False,
+        hybrid_router_scale: float = 1.0,
     ):
         super().__init__()
         self.encoder = FeatureExtraction(k=k, input_dim=3, embedding_dim=feat_dim)
         self.use_pwsenel = use_pwsenel
         self.pwsenel = PWSENEL(feat_dim, k=k) if use_pwsenel else None
+        self.use_pwsenel_v2 = use_pwsenel_v2
+        self.pwsenel_v2_gate = PWSENELv2Gate(
+            feat_dim,
+            k=k,
+            edge_lock_strength=pwsenel_v2_edge_lock,
+            gate_scale=pwsenel_v2_gate_scale,
+        ) if use_pwsenel_v2 else None
         self.use_staas = use_staas
         self.staas_strength = staas_strength
+        self.residual_clip = residual_clip
+        self.adaptive_clip = adaptive_clip
+        self.adaptive_clip_min = adaptive_clip_min
+        self.adaptive_clip_max = adaptive_clip_max
+        self.adaptive_clip_ref_low = adaptive_clip_ref_low
+        self.adaptive_clip_ref_mid = adaptive_clip_ref_mid
+        self.adaptive_clip_ref_high = adaptive_clip_ref_high
+        self.adaptive_clip_mid = adaptive_clip_mid
+        self.noise_aware_move_gate = noise_aware_move_gate
+        self.noise_aware_gate_min = noise_aware_gate_min
+        self.noise_aware_gate_ref_low = noise_aware_gate_ref_low
+        self.noise_aware_gate_ref_high = noise_aware_gate_ref_high
+        self.hybrid_safe_strong = hybrid_safe_strong
+        self.hybrid_router_scale = hybrid_router_scale
         self.staas = STAASv0(k=k, tau0=staas_tau0, tau_min=staas_tau_min, tau_max=staas_tau_max) if use_staas else None
+        self.k_for_scale = k
+        self.use_move_gate = use_move_gate
         self.head = nn.Sequential(
             nn.Linear(feat_dim, hidden),
             nn.ReLU(),
@@ -330,6 +431,26 @@ class ResidualDenoiser(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden, 3),
         )
+        self.strong_head = nn.Sequential(
+            nn.Linear(feat_dim, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, 3),
+        ) if hybrid_safe_strong else None
+        self.move_gate = nn.Sequential(
+            nn.Linear(feat_dim, hidden // 2),
+            nn.ReLU(),
+            nn.Linear(hidden // 2, 1),
+            nn.Sigmoid(),
+        ) if use_move_gate else None
+
+    def _gather_neighbors(self, x: jt.Var, idx: jt.Var) -> jt.Var:
+        B, N, C = x.shape
+        base = (jt.arange(B) * N).reshape(B, 1, 1)
+        flat_idx = (idx + base).reshape(-1)
+        flat = x.reshape(B * N, C)
+        return flat[flat_idx].reshape(B, N, idx.shape[-1], C)
 
     def execute(self, noisy: jt.Var, return_offset: bool = False):
         feat = self.encoder(noisy)
@@ -337,7 +458,79 @@ class ResidualDenoiser(nn.Module):
             feat = self.pwsenel(feat, noisy)
         B, N, C = feat.shape
         neural_offset = self.head(feat.reshape(B * N, C)).reshape(B, N, 3)
-        offset = neural_offset
+
+        if self.hybrid_safe_strong:
+            # Hybrid safe/strong denoising:
+            # - safe branch is protected by PW-SENEL v2 and conservative clipping;
+            # - strong branch keeps move_gate capacity for high-noise clouds;
+            # - router opens the strong branch only when local noise is high and
+            #   edge confidence is low, further modulated by per-cloud scale.
+            idx = get_knn_idx(noisy, noisy, self.k_for_scale + 1)[:, :, 1:]
+            neigh = self._gather_neighbors(noisy, idx)
+            local_dist = (((neigh - noisy.unsqueeze(2)) ** 2).sum(dim=-1) + 1e-12) ** 0.5
+            cloud_scale = local_dist.mean(dim=2, keepdims=True).mean(dim=1, keepdims=True)
+
+            if self.pwsenel_v2_gate is not None:
+                safe_gate, stats = self.pwsenel_v2_gate(feat, noisy, return_stats=True)
+                noise_conf = stats["noise_conf"]
+                edge_conf = stats["edge_conf"]
+            else:
+                safe_gate = 1.0
+                mean_dist = local_dist.mean(dim=2, keepdims=True)
+                noise_conf = jt.sigmoid(mean_dist / (local_dist.mean() + 1e-6))
+                edge_conf = 0.0
+
+            safe_offset = neural_offset * safe_gate
+
+            strong_offset = self.strong_head(feat.reshape(B * N, C)).reshape(B, N, 3)
+            if self.move_gate is not None:
+                strong_gate = self.move_gate(feat.reshape(B * N, C)).reshape(B, N, 1)
+                strong_offset = strong_offset * strong_gate
+
+            t_cloud = jt.clamp((cloud_scale - self.adaptive_clip_ref_low) / (self.adaptive_clip_ref_high - self.adaptive_clip_ref_low + 1e-12), 0.0, 1.0)
+            router = jt.clamp(self.hybrid_router_scale * noise_conf * (1.0 - edge_conf) * t_cloud, 0.0, 1.0)
+            offset = safe_offset * (1.0 - router) + strong_offset * router
+        else:
+            if self.move_gate is not None:
+                gate = self.move_gate(feat.reshape(B * N, C)).reshape(B, N, 1)
+                if self.noise_aware_move_gate:
+                    # Suppress learned movement on low-noise clouds where global
+                    # move_gate previously over-corrected, while leaving mid/high
+                    # noise clouds close to the original move_gate behavior.
+                    idx = get_knn_idx(noisy, noisy, self.k_for_scale + 1)[:, :, 1:]
+                    neigh = self._gather_neighbors(noisy, idx)
+                    local_dist = (((neigh - noisy.unsqueeze(2)) ** 2).sum(dim=-1) + 1e-12) ** 0.5
+                    cloud_scale = local_dist.mean(dim=2, keepdims=True).mean(dim=1, keepdims=True)
+                    t = jt.clamp((cloud_scale - self.noise_aware_gate_ref_low) / (self.noise_aware_gate_ref_high - self.noise_aware_gate_ref_low + 1e-12), 0.0, 1.0)
+                    cloud_gate = self.noise_aware_gate_min + t * (1.0 - self.noise_aware_gate_min)
+                    gate = gate * cloud_gate
+                neural_offset = neural_offset * gate
+            if self.pwsenel_v2_gate is not None:
+                gate = self.pwsenel_v2_gate(feat, noisy)
+                neural_offset = neural_offset * gate
+            offset = neural_offset
+        if self.adaptive_clip:
+            # Piecewise cloud-scale adaptive clipping. Keep low-noise clouds
+            # conservative, reach a v2_clip-like mid residual around ref_mid,
+            # then gradually open high-noise clouds without the low-noise damage
+            # seen from a single aggressive linear ramp.
+            idx = get_knn_idx(noisy, noisy, self.pwsenel_v2_gate.k + 1 if self.pwsenel_v2_gate is not None else 17)[:, :, 1:]
+            neigh = PWSENELv2Gate.gather_neighbors(self.pwsenel_v2_gate, noisy, idx) if self.pwsenel_v2_gate is not None else self._gather_neighbors(noisy, idx)
+            local_dist = (((neigh - noisy.unsqueeze(2)) ** 2).sum(dim=-1) + 1e-12) ** 0.5
+            cloud_scale = local_dist.mean(dim=2, keepdims=True).mean(dim=1, keepdims=True)
+            t_low = jt.clamp((cloud_scale - self.adaptive_clip_ref_low) / (self.adaptive_clip_ref_mid - self.adaptive_clip_ref_low + 1e-12), 0.0, 1.0)
+            t_high = jt.clamp((cloud_scale - self.adaptive_clip_ref_mid) / (self.adaptive_clip_ref_high - self.adaptive_clip_ref_mid + 1e-12), 0.0, 1.0)
+            clip_low = self.adaptive_clip_min + t_low * (self.adaptive_clip_mid - self.adaptive_clip_min)
+            clip_high = self.adaptive_clip_mid + t_high * (self.adaptive_clip_max - self.adaptive_clip_mid)
+            high_mask = (cloud_scale > self.adaptive_clip_ref_mid).float32()
+            clip = clip_low * (1.0 - high_mask) + clip_high * high_mask
+            offset_norm = ((offset ** 2).sum(dim=-1, keepdims=True) + 1e-12) ** 0.5
+            scale = jt.clamp(clip / (offset_norm + 1e-12), 0.0, 1.0)
+            offset = offset * scale
+        elif self.residual_clip and self.residual_clip > 0:
+            offset_norm = ((offset ** 2).sum(dim=-1, keepdims=True) + 1e-12) ** 0.5
+            scale = jt.clamp(self.residual_clip / (offset_norm + 1e-12), 0.0, 1.0)
+            offset = offset * scale
         if self.staas is not None:
             staas_pred = self.staas(noisy)
             staas_offset = (staas_pred - noisy).stop_grad()
@@ -392,6 +585,24 @@ def write_run_summary(args, ds_len: int = 0) -> None:
         f"staas_tau0: {args.staas_tau0}",
         f"staas_tau_min: {args.staas_tau_min}",
         f"staas_tau_max: {args.staas_tau_max}",
+        f"move_gate: {args.move_gate}",
+        f"pwsenel_v2: {args.pwsenel_v2}",
+        f"pwsenel_v2_edge_lock: {args.pwsenel_v2_edge_lock}",
+        f"pwsenel_v2_gate_scale: {args.pwsenel_v2_gate_scale}",
+        f"residual_clip: {args.residual_clip}",
+        f"adaptive_clip: {args.adaptive_clip}",
+        f"adaptive_clip_min: {args.adaptive_clip_min}",
+        f"adaptive_clip_max: {args.adaptive_clip_max}",
+        f"adaptive_clip_ref_low: {args.adaptive_clip_ref_low}",
+        f"adaptive_clip_ref_mid: {args.adaptive_clip_ref_mid}",
+        f"adaptive_clip_ref_high: {args.adaptive_clip_ref_high}",
+        f"adaptive_clip_mid: {args.adaptive_clip_mid}",
+        f"noise_aware_move_gate: {args.noise_aware_move_gate}",
+        f"noise_aware_gate_min: {args.noise_aware_gate_min}",
+        f"noise_aware_gate_ref_low: {args.noise_aware_gate_ref_low}",
+        f"noise_aware_gate_ref_high: {args.noise_aware_gate_ref_high}",
+        f"hybrid_safe_strong: {args.hybrid_safe_strong}",
+        f"hybrid_router_scale: {args.hybrid_router_scale}",
     ]
     summary.write_text("\n".join(lines) + "\n")
 
@@ -416,6 +627,24 @@ def train(args) -> None:
         staas_tau0=args.staas_tau0,
         staas_tau_min=args.staas_tau_min,
         staas_tau_max=args.staas_tau_max,
+        use_move_gate=args.move_gate,
+        use_pwsenel_v2=args.pwsenel_v2,
+        pwsenel_v2_edge_lock=args.pwsenel_v2_edge_lock,
+        pwsenel_v2_gate_scale=args.pwsenel_v2_gate_scale,
+        residual_clip=args.residual_clip,
+        adaptive_clip=args.adaptive_clip,
+        adaptive_clip_min=args.adaptive_clip_min,
+        adaptive_clip_max=args.adaptive_clip_max,
+        adaptive_clip_ref_low=args.adaptive_clip_ref_low,
+        adaptive_clip_ref_mid=args.adaptive_clip_ref_mid,
+        adaptive_clip_ref_high=args.adaptive_clip_ref_high,
+        adaptive_clip_mid=args.adaptive_clip_mid,
+        noise_aware_move_gate=args.noise_aware_move_gate,
+        noise_aware_gate_min=args.noise_aware_gate_min,
+        noise_aware_gate_ref_low=args.noise_aware_gate_ref_low,
+        noise_aware_gate_ref_high=args.noise_aware_gate_ref_high,
+        hybrid_safe_strong=args.hybrid_safe_strong,
+        hybrid_router_scale=args.hybrid_router_scale,
     )
     opt = nn.Adam(model.parameters(), lr=args.lr)
     os.makedirs(Path(args.ckpt).parent, exist_ok=True)
@@ -510,6 +739,24 @@ def predict(args) -> None:
         staas_tau0=args.staas_tau0,
         staas_tau_min=args.staas_tau_min,
         staas_tau_max=args.staas_tau_max,
+        use_move_gate=args.move_gate,
+        use_pwsenel_v2=args.pwsenel_v2,
+        pwsenel_v2_edge_lock=args.pwsenel_v2_edge_lock,
+        pwsenel_v2_gate_scale=args.pwsenel_v2_gate_scale,
+        residual_clip=args.residual_clip,
+        adaptive_clip=args.adaptive_clip,
+        adaptive_clip_min=args.adaptive_clip_min,
+        adaptive_clip_max=args.adaptive_clip_max,
+        adaptive_clip_ref_low=args.adaptive_clip_ref_low,
+        adaptive_clip_ref_mid=args.adaptive_clip_ref_mid,
+        adaptive_clip_ref_high=args.adaptive_clip_ref_high,
+        adaptive_clip_mid=args.adaptive_clip_mid,
+        noise_aware_move_gate=args.noise_aware_move_gate,
+        noise_aware_gate_min=args.noise_aware_gate_min,
+        noise_aware_gate_ref_low=args.noise_aware_gate_ref_low,
+        noise_aware_gate_ref_high=args.noise_aware_gate_ref_high,
+        hybrid_safe_strong=args.hybrid_safe_strong,
+        hybrid_router_scale=args.hybrid_router_scale,
     )
     model.load(args.ckpt)
     model.eval()
@@ -613,6 +860,24 @@ def apply_config(args):
     args.staas_tau0 = model_cfg.get("staas_tau0", args.staas_tau0)
     args.staas_tau_min = model_cfg.get("staas_tau_min", args.staas_tau_min)
     args.staas_tau_max = model_cfg.get("staas_tau_max", args.staas_tau_max)
+    args.move_gate = model_cfg.get("move_gate", args.move_gate)
+    args.pwsenel_v2 = model_cfg.get("pwsenel_v2", args.pwsenel_v2)
+    args.pwsenel_v2_edge_lock = model_cfg.get("pwsenel_v2_edge_lock", args.pwsenel_v2_edge_lock)
+    args.pwsenel_v2_gate_scale = model_cfg.get("pwsenel_v2_gate_scale", args.pwsenel_v2_gate_scale)
+    args.residual_clip = model_cfg.get("residual_clip", args.residual_clip)
+    args.adaptive_clip = model_cfg.get("adaptive_clip", args.adaptive_clip)
+    args.adaptive_clip_min = model_cfg.get("adaptive_clip_min", args.adaptive_clip_min)
+    args.adaptive_clip_max = model_cfg.get("adaptive_clip_max", args.adaptive_clip_max)
+    args.adaptive_clip_ref_low = model_cfg.get("adaptive_clip_ref_low", args.adaptive_clip_ref_low)
+    args.adaptive_clip_ref_mid = model_cfg.get("adaptive_clip_ref_mid", args.adaptive_clip_ref_mid)
+    args.adaptive_clip_ref_high = model_cfg.get("adaptive_clip_ref_high", args.adaptive_clip_ref_high)
+    args.adaptive_clip_mid = model_cfg.get("adaptive_clip_mid", args.adaptive_clip_mid)
+    args.noise_aware_move_gate = model_cfg.get("noise_aware_move_gate", args.noise_aware_move_gate)
+    args.noise_aware_gate_min = model_cfg.get("noise_aware_gate_min", args.noise_aware_gate_min)
+    args.noise_aware_gate_ref_low = model_cfg.get("noise_aware_gate_ref_low", args.noise_aware_gate_ref_low)
+    args.noise_aware_gate_ref_high = model_cfg.get("noise_aware_gate_ref_high", args.noise_aware_gate_ref_high)
+    args.hybrid_safe_strong = model_cfg.get("hybrid_safe_strong", args.hybrid_safe_strong)
+    args.hybrid_router_scale = model_cfg.get("hybrid_router_scale", args.hybrid_router_scale)
 
     args.predict_patch_size = pred_cfg.get("patch_size", args.predict_patch_size)
     if args.mode == "predict":
@@ -654,6 +919,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cd-weight", type=float, default=0.0)
     p.add_argument("--pwsenel", action="store_true")
     p.add_argument("--staas", action="store_true", help="Enable ST-AAS v0 geometry branch")
+    p.add_argument("--move-gate", action="store_true", help="Enable per-point offset movement gate")
+    p.add_argument("--pwsenel-v2", action="store_true", help="Enable PW-SENEL v2 explicit noise/edge confidence gate")
+    p.add_argument("--pwsenel-v2-edge-lock", type=float, default=0.7)
+    p.add_argument("--pwsenel-v2-gate-scale", type=float, default=0.5)
+    p.add_argument("--residual-clip", type=float, default=0.0, help="Clip per-point residual L2 norm; 0 disables clipping")
+    p.add_argument("--adaptive-clip", action="store_true", help="Enable cloud-scale adaptive residual clipping")
+    p.add_argument("--adaptive-clip-min", type=float, default=0.006)
+    p.add_argument("--adaptive-clip-max", type=float, default=0.020)
+    p.add_argument("--adaptive-clip-ref-low", type=float, default=0.022)
+    p.add_argument("--adaptive-clip-ref-mid", type=float, default=0.030)
+    p.add_argument("--adaptive-clip-ref-high", type=float, default=0.040)
+    p.add_argument("--adaptive-clip-mid", type=float, default=0.010)
+    p.add_argument("--noise-aware-move-gate", action="store_true", help="Scale move_gate by per-cloud KNN noise/spacing estimate")
+    p.add_argument("--noise-aware-gate-min", type=float, default=0.45)
+    p.add_argument("--noise-aware-gate-ref-low", type=float, default=0.022)
+    p.add_argument("--noise-aware-gate-ref-high", type=float, default=0.036)
+    p.add_argument("--hybrid-safe-strong", action="store_true", help="Blend conservative PW-SENEL offset with strong move_gate branch")
+    p.add_argument("--hybrid-router-scale", type=float, default=1.0)
     p.add_argument("--staas-strength", type=float, default=1.0)
     p.add_argument("--staas-tau0", type=float, default=0.02)
     p.add_argument("--staas-tau-min", type=float, default=0.005)

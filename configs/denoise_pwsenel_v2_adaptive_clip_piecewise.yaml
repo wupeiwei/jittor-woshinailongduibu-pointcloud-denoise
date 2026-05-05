@@ -1,0 +1,53 @@
+experiment:
+  name: denoise_pwsenel_v2_adaptive_clip_piecewise
+  seed: 123
+
+paths:
+  data_root: dataset_train
+  test_root: dataset_test_noisy
+  train_list: starter_code/datalist/train.txt
+  out_dir: results/denoise_pwsenel_v2_adaptive_clip_piecewise
+  zip: result_denoise_pwsenel_v2_adaptive_clip_piecewise.zip
+  ckpt: experiments/denoise_pwsenel_v2_adaptive_clip_piecewise/pwsenel_v2_adaptive_clip_piecewise.pkl
+
+train:
+  steps: 5000
+  limit: 0
+  num_points: 2048
+  batch_size: 2
+  lr: 0.0001
+  noise_min: 0.005
+  noise_max: 0.02
+  cd_weight: 0.1
+  log_every: 20
+  save_every: 500
+
+model:
+  k: 16
+  feat_dim: 256
+  hidden: 256
+  pwsenel: false
+  pwsenel_v2: true
+  pwsenel_v2_edge_lock: 0.7
+  pwsenel_v2_gate_scale: 0.5
+  residual_clip: 0.0
+  adaptive_clip: true
+  # Piecewise cloud-scale curve from local eval statistics:
+  # low mostly stays 0.006~0.008, mid reaches v2_clip-like 0.010,
+  # high opens gradually but avoids aggressive 0.030 low-noise damage.
+  adaptive_clip_min: 0.006
+  adaptive_clip_mid: 0.010
+  adaptive_clip_max: 0.020
+  adaptive_clip_ref_low: 0.022
+  adaptive_clip_ref_mid: 0.030
+  adaptive_clip_ref_high: 0.040
+  staas: false
+  move_gate: false
+  staas_strength: 1.0
+  staas_tau0: 0.02
+  staas_tau_min: 0.005
+  staas_tau_max: 0.08
+
+predict:
+  patch_size: 1000
+  limit: 0
