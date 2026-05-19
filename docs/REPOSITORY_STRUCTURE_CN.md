@@ -46,11 +46,14 @@ dataset_test_noisy/
 starter_code/
 ```
 
-该目录保存官方 starter code 和相关模块，尽量保持独立。作者自己的正式赛入口主要是：
+该目录保存官方 starter code 和相关模块，同时包含已记录的 VM 补丁。作者自己的正式赛入口主要是：
 
 ```text
 denoise_baseline.py
 ```
+
+在把 `starter_code/src/model/vm.py` 当作原始官方代码之前，请先阅读
+`docs/OFFICIAL_VM_PATCHES.md`。
 
 ## 4. 作者机器 profile
 
@@ -74,10 +77,10 @@ a6000：更大规模正式训练
 
 ```text
 configs/denoise_smoke.yaml
-run_config_smoke.sh
-run_denoise_predict_smoke.sh
-run_denoise_smoke.sh
-run_train_baseline.sh
+scripts/smoke/run_config_smoke.sh
+scripts/smoke/run_denoise_predict_smoke.sh
+scripts/smoke/run_denoise_smoke.sh
+scripts/smoke/run_train_baseline.sh
 scripts/gpu_profile.py
 scripts/freeze_env.sh
 scripts/make_wheelhouse.sh
@@ -85,10 +88,26 @@ scripts/make_wheelhouse.sh
 
 这些文件主要用于环境检查、快速冒烟测试、离线依赖准备、环境记录或作者本人的开发流程。它们有助于调试，但不是理解核心算法的必要文件。
 
-## 6. 文档与项目元信息
+## 6. 正式候选 / 提交流程
+
+这些脚本属于当前正式候选边界，但不属于 baseline 复现所必需：
+
+```text
+scripts/unified_predict.py
+scripts/check_submission.py
+scripts/evaluate_candidate_suite.py
+scripts/candidate_registry.py
+scripts/run_official_eval.py
+```
+
+当目标是生成、校验、评估或登记候选产物时，优先使用这些脚本。
+
+## 7. 文档与项目元信息
 
 ```text
 docs/GPU_PROFILES.md
+docs/OFFICIAL_VM_PATCHES.md
+docs/experiments/
 OPEN_SOURCE.md
 LICENSE
 NOTICE
@@ -97,10 +116,12 @@ CITATION.cff
 
 说明：
 
+- `docs/experiments/`：从重要 analysis 结果中提炼出来的精选 markdown 摘要。
 - `docs/GPU_PROFILES.md`：解释 profile 机制和作者硬件示例
+- `docs/OFFICIAL_VM_PATCHES.md`：说明 fixed-stitch、streaming 和实验性 VM 改动
 - `LICENSE` / `NOTICE` / `CITATION.cff`：许可证、署名和引用信息
 
-## 7. 明确不应上传的内容
+## 8. 明确不应上传的内容
 
 以下内容不是复现源码，不应上传到 git：
 

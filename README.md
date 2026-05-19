@@ -66,7 +66,7 @@ This design targets lightweight, interpretable, edge-preserving denoising with l
 │   ├── predict.sh                   # prediction wrapper
 │   ├── check_env.py                 # environment check
 │   └── check_data.py                # dataset check
-├── starter_code/                    # official starter code, kept mostly unchanged
+├── starter_code/                    # official starter code plus documented VM patches
 ├── docs/
 │   ├── REPOSITORY_STRUCTURE.md    # English repository structure and reproduction boundary
 │   ├── REPOSITORY_STRUCTURE_CN.md # Chinese repository structure and reproduction boundary
@@ -83,6 +83,27 @@ Large files are intentionally excluded from git:
 - checkpoints
 - experiment logs
 - prediction zip files
+
+## 2.1 Recommended Entrypoints
+
+The repository is still in active research, so many diagnostic scripts are kept
+in place. The formal mainline should be read as:
+
+| Task | Entrypoint |
+|---|---|
+| Environment setup | `source scripts/env.sh` |
+| Dependency install | `bash scripts/install_deps.sh` |
+| Environment check | `"$PYTHON" scripts/check_env.py --level jittor-cuda` |
+| Data check | `"$PYTHON" scripts/check_data.py --config <config>` |
+| Baseline / ablation training | `bash scripts/train.sh <config> [profile]` |
+| Formal candidate inference / zip | `"$PYTHON" scripts/unified_predict.py ...` |
+| Submission zip validation | `"$PYTHON" scripts/check_submission.py <zip> --test-root dataset_test_noisy` |
+| Candidate artifact suite | `"$PYTHON" scripts/evaluate_candidate_suite.py --candidate <name>=<zip>` |
+| Candidate registry | `"$PYTHON" scripts/candidate_registry.py ...` |
+
+Other `garad_*`, `prototype_*`, `probe`, scan, A6000, and smoke wrappers are
+research or machine-specific helpers unless a candidate registry entry promotes
+their output.
 
 ## 3. Environment
 
@@ -111,7 +132,13 @@ Check environment:
 
 ```bash
 source scripts/env.sh
-"$PYTHON" scripts/check_env.py
+"$PYTHON" scripts/check_env.py --level jittor-cuda
+```
+
+For NumPy-only tools such as zip validation or registry bookkeeping:
+
+```bash
+"$PYTHON" scripts/check_env.py --level python
 ```
 
 ## 4. Data Preparation
@@ -197,6 +224,19 @@ bash scripts/predict.sh configs/denoise_baseline.yaml configs/profiles/local_dev
 
 The script writes prediction results and submission zip according to the config paths.
 
+For formal candidate work, prefer the unified candidate path:
+
+```bash
+source scripts/env.sh
+"$PYTHON" scripts/unified_predict.py \
+  --name <candidate_name> \
+  --out-dir results/<candidate_name> \
+  --zip result_<candidate_name>.zip
+"$PYTHON" scripts/check_submission.py result_<candidate_name>.zip \
+  --test-root dataset_test_noisy \
+  --require-float32
+```
+
 You can also use the direct entry:
 
 ```bash
@@ -213,6 +253,8 @@ Each wrapper run saves run metadata, config/profile information, and logs under 
 - `README_REPRODUCE.md`
 - `docs/REPOSITORY_STRUCTURE.md`
 - `docs/GPU_PROFILES.md`
+- `docs/OFFICIAL_VM_PATCHES.md`
+- `docs/experiments/`
 
 Important environment convention:
 

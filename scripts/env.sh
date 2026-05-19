@@ -15,6 +15,10 @@ fi
 export CC="${CC:-gcc}"
 export CXX="${CXX:-g++}"
 export DISABLE_MULTIPROCESSING="${DISABLE_MULTIPROCESSING:-1}"
+# Keep Jittor cache writes inside an explicit repository-local scratch root by
+# default. Jittor resolves cache paths under "$JITTOR_HOME/.cache/jittor"; users
+# can override this for shared compiled caches on their own machines.
+export JITTOR_HOME="${JITTOR_HOME:-$PROJECT_ROOT/.jittor_home}"
 
 # Optional venv. On A6000/5060Ti servers, create the same path or set VENV_PATH=/path/to/venv.
 VENV_PATH="${VENV_PATH:-$PROJECT_ROOT/starter_code/.venv}"

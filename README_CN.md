@@ -111,7 +111,7 @@ pred_i = p_i + (1 - edge_conf_i) * (smooth_i - p_i)
 │   ├── predict.sh                   # 预测封装脚本
 │   ├── check_env.py                 # 环境检查
 │   └── check_data.py                # 数据检查
-├── starter_code/                    # 官方 starter code，尽量保持独立
+├── starter_code/                    # 官方 starter code + 已记录的 VM 补丁
 ├── docs/
 │   ├── REPOSITORY_STRUCTURE.md       # 英文仓库结构与复现边界说明
 │   ├── REPOSITORY_STRUCTURE_CN.md    # 中文仓库结构与复现边界说明
@@ -123,6 +123,25 @@ pred_i = p_i + (1 - edge_conf_i) * (smooth_i - p_i)
 ├── requirements.txt
 └── .gitignore
 ```
+
+## 3.1 推荐入口
+
+仓库仍处于研究期，很多诊断脚本会继续保留。正式主线只认以下入口：
+
+| 任务 | 入口 |
+|---|---|
+| 环境初始化 | `source scripts/env.sh` |
+| 安装依赖 | `bash scripts/install_deps.sh` |
+| 环境检查 | `"$PYTHON" scripts/check_env.py --level jittor-cuda` |
+| 数据检查 | `"$PYTHON" scripts/check_data.py --config <config>` |
+| baseline / ablation 训练 | `bash scripts/train.sh <config> [profile]` |
+| 正式候选推理 / 打包 | `"$PYTHON" scripts/unified_predict.py ...` |
+| 提交 zip 检查 | `"$PYTHON" scripts/check_submission.py <zip> --test-root dataset_test_noisy` |
+| 候选产物评估套件 | `"$PYTHON" scripts/evaluate_candidate_suite.py --candidate <name>=<zip>` |
+| 候选登记 | `"$PYTHON" scripts/candidate_registry.py ...` |
+
+其他 `garad_*`、`prototype_*`、probe、scan、A6000、smoke wrapper 默认都是
+research / experimental / machine-specific，除非 Candidate Registry 明确提升为推荐候选。
 
 ## 4. 环境准备
 
@@ -151,7 +170,13 @@ bash scripts/install_deps.sh
 
 ```bash
 source scripts/env.sh
-"$PYTHON" scripts/check_env.py
+"$PYTHON" scripts/check_env.py --level jittor-cuda
+```
+
+如果只运行 zip 检查、registry 等 NumPy 工具，可先做轻量检查：
+
+```bash
+"$PYTHON" scripts/check_env.py --level python
 ```
 
 ## 5. 数据准备
@@ -251,6 +276,8 @@ source scripts/env.sh
 - `README_REPRODUCE.md`
 - `docs/REPOSITORY_STRUCTURE_CN.md`
 - `docs/GPU_PROFILES.md`
+- `docs/OFFICIAL_VM_PATCHES.md`
+- `docs/experiments/`
 
 注意：运行 Jittor 相关命令前，建议先执行：
 
@@ -259,6 +286,8 @@ source scripts/env.sh
 ```
 
 这样可以加载项目约定的 Python、编译器和 CUDA/Jittor 环境配置。仓库里的硬件 profile 主要记录作者的实验环境，也可以按其他机器情况自行修改。
+
+`docs/experiments/` 只保留少量精选摘要，不替代 `analysis/` 的工作区产物，也不替代 `experiments/candidate_registry.*` 的候选索引。
 
 ## 9. 不要上传的内容
 
