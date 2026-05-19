@@ -10,6 +10,14 @@ train:
   batch_size: 8
   log_every: 20
   save_every: 1000
+  # Diagnose input-pipeline bottlenecks on A6000.
+  # clean OBJ cache avoids repeated trimesh.load/normalize in the single-process
+  # Python training loop; profiling logs data/compute/CPU-thread/GPU-util stats.
+  cache_clean: true
+  prefetch_workers: 4
+  prefetch_queue_size: 8
+  profile_times: true
+  profile_system_every: 20
 
 model:
   k: 20
@@ -17,4 +25,4 @@ model:
   hidden: 256
 
 predict:
-  patch_size: 8000
+  patch_size: 8192

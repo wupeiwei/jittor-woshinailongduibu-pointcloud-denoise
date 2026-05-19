@@ -11,7 +11,7 @@
 ├── denoise_baseline.py          # 自写正式赛 baseline / PW-SENEL
 ├── configs/                     # 可复现实验配置
 ├── scripts/                     # 统一运行入口
-├── experiments/                 # ckpt 与 run 归档
+├── experiments/                 # ckpt、run 归档、candidate registry
 ├── results/                     # predict 输出
 ├── dataset_train -> ...         # 训练数据软链接
 └── dataset_test_noisy -> ...    # 测试数据软链接
@@ -51,7 +51,13 @@ PYTHON=python3 bash scripts/install_deps.sh
 ```bash
 cd /path/to/jittor-pointcloud-denoise
 source scripts/env.sh
-$PYTHON scripts/check_env.py
+$PYTHON scripts/check_env.py --level jittor-cuda
+```
+
+如果只检查 Python / NumPy 工具链：
+
+```bash
+$PYTHON scripts/check_env.py --level python
 ```
 
 ## 训练
@@ -142,6 +148,56 @@ bash scripts/predict.sh configs/denoise_baseline.yaml
 ```text
 shapenet/<synset_id>/<model_id>/denoised.npy
 ```
+
+正式候选建议优先用统一推理入口，再做提交包校验：
+
+```bash
+source scripts/env.sh
+$PYTHON scripts/unified_predict.py --name <candidate> --out-dir results/<candidate> --zip result_<candidate>.zip
+$PYTHON scripts/check_submission.py result_<candidate>.zip --test-root dataset_test_noisy --require-float32
+```
+
+## Candidate Registry / Unified Pipeline
+
+正式候选要求候选记录自动化、官方 `evaluate.py` 口径可追踪、A/B 同构入口固化。相关说明见：`docs/CANDIDATE_REGISTRY.md`。
+
+当前推荐候选推理入口是统一脚本，而不是零散预测脚本。下面是入口形态示例，不代表推荐具体算法：
+
+```bash
+source scripts/env.sh
+$PYTHON scripts/unified_predict.py \
+  --name <candidate> \
+  --patch-size 8192 \
+  --out-dir results/<candidate> \
+  --zip result_<candidate>.zip
+$PYTHON scripts/check_submission.py result_<candidate>.zip \
+  --test-root dataset_test_noisy \
+  --require-float32
+```
+
+历史 `router_t0165` / hard-router 示例只作为 Phase-1 记录保留，不是当前推荐候选。当前 registry anchor 是 `blend_best075_lir025_20260517` / fixed075，官方分数 `53.32`。GARA-D identity / bounded tiny 仍是 experimental，tiny shrink 不是官方提交推荐。
+
+候选登记示例：
+
+```bash
+$PYTHON scripts/candidate_registry.py \
+  --name <candidate> \
+  --config <config.yaml> \
+  --ckpt <checkpoint.pkl> \
+  --zip result_<candidate>.zip \
+  --branch "<pipeline-or-artifact-branch>" \
+  --patch-size 8192 \
+  --submission-check passed \
+  --conclusion "<有证据来源的结论>"
+```
+
+候选输出：
+
+- `experiments/candidates.jsonl`
+- `experiments/candidate_registry.csv`
+- `experiments/candidate_registry.md`
+
+精选的文字摘要会另外保存在 `docs/experiments/`，用于快速阅读；完整工作区产物仍留在 `analysis/`，不要把它当作主线复现入口。
 
 ## 当前模型
 
