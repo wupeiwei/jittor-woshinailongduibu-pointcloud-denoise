@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def deep_update(base: dict, patch: dict | None) -> dict:
+    # config + profile 合并规则与训练/推理脚本保持一致：profile 只覆盖声明字段。
     for key, value in (patch or {}).items():
         if isinstance(value, dict) and isinstance(base.get(key), dict):
             deep_update(base[key], value)
@@ -52,6 +53,7 @@ def load_config(config: str, profiles: list[str]) -> dict:
 
 
 def expected_entries_from_test_root(test_root: Path) -> set[str]:
+    # 用 noisy.npy 目录结构推导提交 zip 必须包含的 denoised.npy 相对路径。
     files = sorted(test_root.glob("shapenet/*/*/noisy.npy"))
     return {str(f.relative_to(test_root).parent / "denoised.npy") for f in files}
 
@@ -70,9 +72,11 @@ def validate_zip(
     test_root: Path | None = None,
     require_float32: bool = False,
 ) -> None:
+    # 这是正式提交前的本地硬门槛：结构、数量、shape、dtype、有限值必须先过。
     if not zip_path.exists():
         raise FileNotFoundError(f"zip not found: {zip_path}")
 
+    # 如果提供 test_root，则进一步校验 zip 条目与隐藏测试 noisy 树一一对应。
     expected_entries = expected_entries_from_test_root(test_root) if test_root else None
     names_seen: set[str] = set()
     bad: list[str] = []
@@ -83,6 +87,7 @@ def validate_zip(
 
     with zipfile.ZipFile(zip_path, "r") as zf:
         names = [name for name in zf.namelist() if not name.endswith("/")]
+        # 文件数先做粗筛；后面仍逐项检查路径和 npy 内容。
         if len(names) != expected_count:
             bad.append(f"file count mismatch: got {len(names)}, expected {expected_count}")
 
@@ -93,6 +98,7 @@ def validate_zip(
         for name in names:
             names_seen.add(name)
             parts = Path(name).parts
+            # 官方格式固定为 shapenet/<category>/<model>/denoised.npy。
             if len(parts) != 4 or parts[0] != "shapenet" or parts[-1] != "denoised.npy":
                 bad.append(f"bad path: {name}")
                 continue
@@ -107,6 +113,7 @@ def validate_zip(
             shapes[arr.shape] = shapes.get(arr.shape, 0) + 1
             dtypes[str(arr.dtype)] = dtypes.get(str(arr.dtype), 0) + 1
 
+            # 逐项收集所有错误，最后统一输出，避免修一个文件再跑一次。
             if arr.shape != expected_shape:
                 bad.append(f"bad shape: {name} got {arr.shape}, expected {expected_shape}")
             if arr.ndim != 2 or arr.shape[-1] != 3:
@@ -122,6 +129,7 @@ def validate_zip(
                 finite_max = max(finite_max, float(arr.max()))
 
     if expected_entries is not None:
+        # test_root match 能抓住漏样本、额外样本和目录层级错误。
         missing = sorted(expected_entries - names_seen)
         extra = sorted(names_seen - expected_entries)
         if missing:
@@ -149,6 +157,7 @@ def validate_zip(
 
 def main() -> None:
     p = argparse.ArgumentParser()
+    # zip 可从 CLI 直接传入，也可从 config paths.zip 读取，方便脚本链复用。
     p.add_argument("zip", nargs="?", default="", help="submission zip path; defaults to config paths.zip")
     p.add_argument("--config", default="configs/denoise_baseline.yaml")
     p.add_argument("--profile", action="append", default=[])

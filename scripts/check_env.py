@@ -27,6 +27,7 @@ def run(cmd: Iterable[str]) -> str | None:
         out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
         return out.strip()
     except Exception as e:
+        # 环境检查尽量继续打印上下文；真正是否失败由调用层决定。
         print(f"{' '.join(cmd)} failed: {e}")
         return None
 
@@ -47,10 +48,12 @@ def print_cmd(cmd: Iterable[str]) -> None:
 
 def require_module(name: str, hint: str) -> None:
     if importlib.util.find_spec(name) is None:
+        # 依赖缺失时给出面向本仓库的修复提示，而不是裸 ImportError。
         raise RuntimeError(f"missing Python module: {name}. {hint}")
 
 
 def print_basic_env() -> None:
+    # 先打印不触发 Jittor import 的基础信息，便于定位 PATH/编译器/GPU 可见性问题。
     print("python:", sys.version.replace("\n", " "))
     print("executable:", sys.executable)
     print("platform:", platform.platform())
@@ -84,6 +87,8 @@ def print_basic_env() -> None:
 
 
 def check_python_numpy() -> None:
+    # 纯 Python 层只覆盖 registry、zip 检查、候选 suite、报告生成等工具依赖。
+    # 这一层不应该因为 Jittor/CUDA 编译失败而失败。
     print("\n[check] python/numpy toolchain")
     modules = [
         ("numpy", "Install project dependencies with: bash scripts/install_deps.sh"),
@@ -99,6 +104,7 @@ def check_python_numpy() -> None:
 
 
 def check_cupy_cuda(require_device: bool) -> bool:
+    # CUDA 层先用 CuPy 探测 runtime 和可见设备；这比直接 import Jittor 更容易给出清晰错误。
     print("\n[check] cupy/cuda runtime")
     require_module(
         "cupy",
@@ -129,6 +135,7 @@ def check_jittor(use_cuda: bool) -> None:
     label = "jittor_cuda" if use_cuda else "jittor_cpu"
     print(f"\n[check] {label}")
     try:
+        # Jittor import/首个 op 可能触发编译；这里用最小张量运算做烟测。
         import jittor as jt
 
         jt.flags.use_cuda = 1 if use_cuda else 0
@@ -146,6 +153,7 @@ def check_jittor(use_cuda: bool) -> None:
             )
         if "Read-only file system" in repr(e) and ".cache/jittor" in repr(e):
             print(
+                # Jittor cache 需要可写目录，scripts/env.sh 默认把它收进 repo-local .jittor_home。
                 "hint: Jittor needs a writable HOME/cache path. Run `source scripts/env.sh` "
                 "and, if the current HOME is read-only, point HOME to a writable directory "
                 "before importing Jittor."
@@ -168,6 +176,8 @@ def main() -> None:
     print_basic_env()
 
     try:
+        # 三层环境显式拆开：numpy-only 工具、Jittor CPU、Jittor CUDA。
+        # 这样评估/打包脚本不会被 CUDA 编译问题误伤。
         if args.level in {"python", "all"}:
             check_python_numpy()
         if args.level in {"jittor-cpu", "all"}:
