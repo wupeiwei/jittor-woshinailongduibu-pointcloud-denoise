@@ -1,0 +1,62 @@
+# Minimal fair LIR-v1 fast ablation config.
+# Purpose: test whether train-time T=2 unrolled refinement is viable.
+# Not for full train, official predict, or submission.
+
+experiment:
+  name: denoise_lir_v1_t2_fast_ablation
+  seed: 123
+
+paths:
+  data_root: dataset_train
+  test_root: dataset_test_noisy
+  train_list: starter_code/datalist/train.txt
+  out_dir: results/denoise_lir_v1_t2_fast_ablation
+  zip: result_denoise_lir_v1_t2_fast_ablation.zip
+  ckpt: experiments/denoise_lir_v1_t2_fast_ablation/lir_v1_t2_fast_ablation.pkl
+
+train:
+  steps: 3000
+  limit: 2000
+  num_points: 2048
+  batch_size: 2
+  lr: 0.0001
+  noise_min: 0.005
+  noise_max: 0.02
+  cd_weight: 0.1
+  cd_every: 100
+  cd_num_points: 1024
+  lir_unroll_steps: 2
+  lir_alpha: 0.75
+  lir_intermediate_weight: 0.15
+  lir_offset_reg_weight: 0.001
+  lir_consistency_weight: 0.05
+  cache_clean: false
+  prefetch_workers: 0
+  prefetch_queue_size: 4
+  profile_times: true
+  profile_system_every: 0
+  log_every: 20
+  save_every: 500
+
+model:
+  k: 16
+  feat_dim: 256
+  hidden: 256
+  pwsenel: false
+  staas: false
+  move_gate: true
+  noise_aware_move_gate: true
+  noise_aware_gate_min: 0.45
+  noise_aware_gate_ref_low: 0.022
+  noise_aware_gate_ref_high: 0.036
+  pwsenel_v2: false
+  residual_clip: 0.0
+  adaptive_clip: false
+  staas_strength: 1.0
+  staas_tau0: 0.02
+  staas_tau_min: 0.005
+  staas_tau_max: 0.08
+
+predict:
+  limit: 0
+  patch_size: 1000

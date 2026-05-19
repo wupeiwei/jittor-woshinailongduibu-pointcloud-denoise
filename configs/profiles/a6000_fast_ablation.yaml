@@ -1,0 +1,35 @@
+# Fast ablation profile for A6000.
+# Purpose: quickly screen module direction before expensive full 8192-point runs.
+# Use only for direction filtering; winners still need full train + predict + registry.
+
+experiment:
+  name: denoise_fast_ablation
+
+paths:
+  ckpt: experiments/denoise_fast_ablation/fast_ablation.pkl
+  out_dir: results/denoise_fast_ablation
+  zip: result_denoise_fast_ablation.zip
+
+train:
+  steps: 3000
+  limit: 0
+  num_points: 4096
+  batch_size: 8
+  log_every: 20
+  save_every: 500
+  # Dense Chamfer is O(B*N^2). Keep it low-frequency and subsampled for screening.
+  cd_every: 100
+  cd_num_points: 1024
+  cache_clean: true
+  prefetch_workers: 4
+  prefetch_queue_size: 8
+  profile_times: true
+  profile_system_every: 20
+
+model:
+  k: 20
+  feat_dim: 256
+  hidden: 256
+
+predict:
+  patch_size: 4096

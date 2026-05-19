@@ -1,0 +1,36 @@
+# Fast ablation profile for A6000: baseline + move_gate only.
+# Purpose: screen whether learned per-point movement gating helps before full 8192-point training.
+# Use with: configs/denoise_move_gate.yaml
+
+experiment:
+  name: denoise_move_gate_fast_ablation
+
+paths:
+  ckpt: experiments/denoise_move_gate_fast_ablation/move_gate_fast_ablation.pkl
+  out_dir: results/denoise_move_gate_fast_ablation
+  zip: result_denoise_move_gate_fast_ablation.zip
+
+train:
+  steps: 3000
+  limit: 0
+  num_points: 4096
+  batch_size: 8
+  log_every: 20
+  save_every: 500
+  # Dense Chamfer is O(B*N^2). Keep it low-frequency and subsampled for screening.
+  cd_every: 100
+  cd_num_points: 1024
+  cache_clean: true
+  prefetch_workers: 4
+  prefetch_queue_size: 8
+  profile_times: true
+  profile_system_every: 20
+
+model:
+  k: 20
+  feat_dim: 256
+  hidden: 256
+  move_gate: true
+
+predict:
+  patch_size: 4096
