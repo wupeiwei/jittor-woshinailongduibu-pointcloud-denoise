@@ -1,14 +1,14 @@
 mode: predict
 debug: False
-load_ckpt: experiments/vm_quick/checkpoint_0.pkl
+load_ckpt: experiments/vm/checkpoint_99.pkl
 
 components:
   data: predict_quick
   transform: predict
-  system: vm_quick
+  system: vm
   model: vm
 
 writer:
   __target__: vm
-  save_dir: results_quick/dataset_test_noisy
+  save_dir: tmp_predict_quick
   save_name: denoised
