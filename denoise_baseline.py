@@ -19,8 +19,12 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import queue
 import random
+import resource
+import subprocess
 import sys
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -32,6 +36,7 @@ import yaml
 
 
 def deep_update(base, patch):
+    # YAML profile 合并规则：只覆盖 profile 里显式写出的字段，其他字段沿用 base。
     for k, v in (patch or {}).items():
         if isinstance(v, dict) and isinstance(base.get(k), dict):
             deep_update(base[k], v)
@@ -39,7 +44,8 @@ def deep_update(base, patch):
             base[k] = v
     return base
 
-# Reuse official feature blocks without modifying official baseline.
+# 复用官方 starter_code 的特征模块，但不在这里改官方 baseline 实现。
+# 自写模型和官方 VM 的边界要保持清楚，避免提交链路混淆。
 ROOT = Path(__file__).resolve().parent
 STARTER = ROOT / "starter_code"
 sys.path.insert(0, str(STARTER))
@@ -96,11 +102,15 @@ class ObjDenoiseDataset:
         noise_min: float = 0.005,
         noise_max: float = 0.02,
         limit: int = 0,
+        cache_clean: bool = False,
     ):
         self.data_root = Path(data_root)
         self.num_points = num_points
         self.noise_min = noise_min
         self.noise_max = noise_max
+        self.cache_clean = cache_clean
+        self._clean_cache: dict[int, np.ndarray] = {}
+        # datalist 可能写 shapenet/...，也可能只写 category/model_id；下面兼容两种格式。
         ids = [x.strip() for x in Path(list_file).read_text().splitlines() if x.strip()]
         if limit > 0:
             ids = ids[:limit]
@@ -121,9 +131,16 @@ class ObjDenoiseDataset:
         return len(self.files)
 
     def __getitem__(self, idx: int) -> Tuple[np.ndarray, np.ndarray]:
-        clean = load_obj_vertices(self.files[idx])
-        clean = normalize_pc(clean)
-        clean = sample_points(clean, self.num_points)
+        # cache_clean 只缓存归一化后的 clean vertices；每次仍重新采样和加噪，
+        # 所以不会把训练退化成固定 noisy/clean 对。
+        if self.cache_clean and idx in self._clean_cache:
+            clean_full = self._clean_cache[idx]
+        else:
+            clean_full = load_obj_vertices(self.files[idx])
+            clean_full = normalize_pc(clean_full)
+            if self.cache_clean:
+                self._clean_cache[idx] = clean_full
+        clean = sample_points(clean_full, self.num_points)
         sigma = np.random.uniform(self.noise_min, self.noise_max)
         noisy = clean + np.random.normal(0.0, sigma, clean.shape).astype(np.float32)
         return noisy.astype(np.float32), clean.astype(np.float32)
@@ -153,6 +170,90 @@ def make_batch(ds: ObjDenoiseDataset, batch_size: int) -> Tuple[jt.Var, jt.Var]:
         noisy.append(n)
         clean.append(c)
     return jt.array(np.stack(noisy)), jt.array(np.stack(clean))
+
+
+class BatchPrefetcher:
+    """Prepare NumPy batches in background threads; keep Jittor work on main thread."""
+
+    def __init__(self, ds: ObjDenoiseDataset, batch_size: int, workers: int, queue_size: int):
+        self.ds = ds
+        self.batch_size = batch_size
+        self._stop = threading.Event()
+        self._queue: queue.Queue = queue.Queue(maxsize=max(1, queue_size))
+        self._threads = []
+        for i in range(max(1, workers)):
+            t = threading.Thread(target=self._worker, name=f"batch-prefetch-{i}", daemon=True)
+            t.start()
+            self._threads.append(t)
+
+    def _make_numpy_batch(self) -> tuple[np.ndarray, np.ndarray]:
+        noisy, clean = [], []
+        for _ in range(self.batch_size):
+            n, c = self.ds[random.randrange(len(self.ds))]
+            noisy.append(n)
+            clean.append(c)
+        return np.stack(noisy).astype(np.float32), np.stack(clean).astype(np.float32)
+
+    def _worker(self) -> None:
+        # 后台线程只准备 NumPy batch，不碰 Jittor 张量，降低 CUDA/Jittor 线程风险。
+        while not self._stop.is_set():
+            try:
+                self._queue.put(self._make_numpy_batch(), timeout=0.2)
+            except queue.Full:
+                continue
+            except Exception as e:
+                try:
+                    self._queue.put(e, timeout=0.2)
+                except queue.Full:
+                    pass
+
+    def next_batch(self) -> Tuple[jt.Var, jt.Var]:
+        item = self._queue.get()
+        if isinstance(item, Exception):
+            raise item
+        noisy_np, clean_np = item
+        return jt.array(noisy_np), jt.array(clean_np)
+
+    def close(self) -> None:
+        self._stop.set()
+        for t in self._threads:
+            t.join(timeout=0.5)
+
+
+def make_batch_prefetched(prefetcher: BatchPrefetcher | None, ds: ObjDenoiseDataset, batch_size: int) -> Tuple[jt.Var, jt.Var]:
+    if prefetcher is not None:
+        return prefetcher.next_batch()
+    return make_batch(ds, batch_size)
+
+
+def gpu_utilization() -> str:
+    try:
+        out = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=utilization.gpu,memory.used,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            text=True,
+            timeout=2,
+        ).strip()
+        return out.replace("\n", ";")
+    except Exception:
+        return ""
+
+
+def cpu_utilization() -> str:
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    try:
+        out = subprocess.check_output(
+            ["ps", "-o", "%cpu,%mem,rss=", "-p", str(os.getpid())],
+            text=True,
+            timeout=2,
+        ).strip().splitlines()
+        line = out[-1].strip() if out else ""
+    except Exception:
+        line = ""
+    return f"{line};utime={usage.ru_utime:.1f};stime={usage.ru_stime:.1f}"
 
 
 class PWSENEL(nn.Module):
@@ -395,6 +496,7 @@ class ResidualDenoiser(nn.Module):
         hybrid_router_scale: float = 1.0,
     ):
         super().__init__()
+        # 主干编码器复用官方 FeatureExtraction；后面的 head/gate 是本仓库研究层。
         self.encoder = FeatureExtraction(k=k, input_dim=3, embedding_dim=feat_dim)
         self.use_pwsenel = use_pwsenel
         self.pwsenel = PWSENEL(feat_dim, k=k) if use_pwsenel else None
@@ -453,6 +555,8 @@ class ResidualDenoiser(nn.Module):
         return flat[flat_idx].reshape(B, N, idx.shape[-1], C)
 
     def execute(self, noisy: jt.Var, return_offset: bool = False):
+        # 主路径：noisy -> feature -> residual offset -> 可选门控/裁剪/几何分支 -> pred。
+        # 所有研究模块都以开关形式挂在这条路径上，便于做 ablation 和回退。
         feat = self.encoder(noisy)
         if self.pwsenel is not None:
             feat = self.pwsenel(feat, noisy)
@@ -601,6 +705,11 @@ def write_run_summary(args, ds_len: int = 0) -> None:
         f"noise_aware_gate_min: {args.noise_aware_gate_min}",
         f"noise_aware_gate_ref_low: {args.noise_aware_gate_ref_low}",
         f"noise_aware_gate_ref_high: {args.noise_aware_gate_ref_high}",
+        f"cache_clean: {args.cache_clean}",
+        f"prefetch_workers: {args.prefetch_workers}",
+        f"prefetch_queue_size: {args.prefetch_queue_size}",
+        f"profile_times: {args.profile_times}",
+        f"profile_system_every: {args.profile_system_every}",
         f"hybrid_safe_strong: {args.hybrid_safe_strong}",
         f"hybrid_router_scale: {args.hybrid_router_scale}",
     ]
@@ -608,6 +717,7 @@ def write_run_summary(args, ds_len: int = 0) -> None:
 
 
 def train(args) -> None:
+    # 训练入口只负责自写 ResidualDenoiser，不训练官方 starter_code VM。
     check_paths(args, need_train=True)
     ds = ObjDenoiseDataset(
         data_root=args.data_root,
@@ -616,6 +726,7 @@ def train(args) -> None:
         noise_min=args.noise_min,
         noise_max=args.noise_max,
         limit=args.limit,
+        cache_clean=args.cache_clean,
     )
     model = ResidualDenoiser(
         k=args.k,
@@ -647,6 +758,19 @@ def train(args) -> None:
         hybrid_router_scale=args.hybrid_router_scale,
     )
     opt = nn.Adam(model.parameters(), lr=args.lr)
+    prefetcher = None
+    if args.prefetch_workers > 0:
+        prefetcher = BatchPrefetcher(
+            ds,
+            batch_size=args.batch_size,
+            workers=args.prefetch_workers,
+            queue_size=args.prefetch_queue_size,
+        )
+        print(
+            f"input prefetch enabled: workers={args.prefetch_workers} "
+            f"queue_size={args.prefetch_queue_size}",
+            flush=True,
+        )
     os.makedirs(Path(args.ckpt).parent, exist_ok=True)
     write_run_summary(args, ds_len=len(ds))
     csv_fields = [
@@ -657,6 +781,9 @@ def train(args) -> None:
         "pred_offset_mean",
         "pred_offset_abs_mean",
         "pred_offset_l2_mean",
+        "data_time_sec",
+        "compute_time_sec",
+        "step_time_sec",
         "elapsed_sec",
     ]
     csv_path = Path(args.ckpt).with_suffix(".train.csv")
@@ -673,42 +800,67 @@ def train(args) -> None:
         csv_w.writeheader()
     t0 = time.time()
 
-    for step in range(1, args.steps + 1):
-        noisy, clean = make_batch(ds, args.batch_size)
-        pred, pred_offset = model(noisy, return_offset=True)
-        loss_offset = ((pred - clean) ** 2).mean()
-        loss_cd = chamfer_l2(pred, clean) if args.cd_weight > 0 else jt.array(0.0)
-        loss = loss_offset + args.cd_weight * loss_cd
-        opt.step(loss)
-        loss_v = scalar(loss)
-        offset_mse_v = scalar(loss_offset)
-        cd_v = scalar(loss_cd)
-        pred_offset_mean_v = scalar(pred_offset.mean())
-        pred_offset_abs_mean_v = scalar(jt.abs(pred_offset).mean())
-        pred_offset_l2_mean_v = scalar((((pred_offset ** 2).sum(dim=-1) + 1e-12) ** 0.5).mean())
-        if step == 1 or step % args.log_every == 0:
-            elapsed = time.time() - t0
-            print(
-                f"step={step} loss={loss_v:.6f} offset_mse={offset_mse_v:.6f} "
-                f"cd={cd_v:.6f} pred_offset_abs_mean={pred_offset_abs_mean_v:.6f} "
-                f"pred_offset_l2_mean={pred_offset_l2_mean_v:.6f} elapsed={elapsed:.1f}s",
-                flush=True,
-            )
-            csv_w.writerow({
-                "step": step,
-                "loss": loss_v,
-                "offset_mse": offset_mse_v,
-                "cd": cd_v,
-                "pred_offset_mean": pred_offset_mean_v,
-                "pred_offset_abs_mean": pred_offset_abs_mean_v,
-                "pred_offset_l2_mean": pred_offset_l2_mean_v,
-                "elapsed_sec": elapsed,
-            })
-            csv_f.flush()
-        if step % args.save_every == 0 or step == args.steps:
-            model.save(args.ckpt)
-            print(f"saved {args.ckpt}", flush=True)
-    csv_f.close()
+    prev_step_end = time.time()
+    try:
+        for step in range(1, args.steps + 1):
+            # data_time 和 compute_time 分开记，便于判断瓶颈在 OBJ/NumPy 输入还是 Jittor 前后向。
+            step_start = time.time()
+            noisy, clean = make_batch_prefetched(prefetcher, ds, args.batch_size)
+            data_ready = time.time()
+            pred, pred_offset = model(noisy, return_offset=True)
+            loss_offset = ((pred - clean) ** 2).mean()
+            loss_cd = chamfer_l2(pred, clean) if args.cd_weight > 0 else jt.array(0.0)
+            loss = loss_offset + args.cd_weight * loss_cd
+            opt.step(loss)
+            compute_done = time.time()
+            data_time = data_ready - step_start
+            compute_time = compute_done - data_ready
+            step_time = compute_done - prev_step_end
+            prev_step_end = compute_done
+            loss_v = scalar(loss)
+            offset_mse_v = scalar(loss_offset)
+            cd_v = scalar(loss_cd)
+            pred_offset_mean_v = scalar(pred_offset.mean())
+            pred_offset_abs_mean_v = scalar(jt.abs(pred_offset).mean())
+            pred_offset_l2_mean_v = scalar((((pred_offset ** 2).sum(dim=-1) + 1e-12) ** 0.5).mean())
+            if step == 1 or step % args.log_every == 0:
+                elapsed = time.time() - t0
+                profile_now = args.profile_times or (args.profile_system_every > 0 and step % args.profile_system_every == 0)
+                profile_msg = ""
+                if args.profile_times:
+                    profile_msg = (
+                        f" data_time={data_time:.4f}s compute_time={compute_time:.4f}s "
+                        f"step_time={step_time:.4f}s"
+                    )
+                if profile_now:
+                    profile_msg += f" gpu_util='{gpu_utilization()}' cpu_util='{cpu_utilization()}'"
+                print(
+                    f"step={step} loss={loss_v:.6f} offset_mse={offset_mse_v:.6f} "
+                    f"cd={cd_v:.6f} pred_offset_abs_mean={pred_offset_abs_mean_v:.6f} "
+                    f"pred_offset_l2_mean={pred_offset_l2_mean_v:.6f} elapsed={elapsed:.1f}s{profile_msg}",
+                    flush=True,
+                )
+                csv_w.writerow({
+                    "step": step,
+                    "loss": loss_v,
+                    "offset_mse": offset_mse_v,
+                    "cd": cd_v,
+                    "pred_offset_mean": pred_offset_mean_v,
+                    "pred_offset_abs_mean": pred_offset_abs_mean_v,
+                    "pred_offset_l2_mean": pred_offset_l2_mean_v,
+                    "data_time_sec": data_time,
+                    "compute_time_sec": compute_time,
+                    "step_time_sec": step_time,
+                    "elapsed_sec": elapsed,
+                })
+                csv_f.flush()
+            if step % args.save_every == 0 or step == args.steps:
+                model.save(args.ckpt)
+                print(f"saved {args.ckpt}", flush=True)
+    finally:
+        if prefetcher is not None:
+            prefetcher.close()
+        csv_f.close()
 
 
 def predict_points_in_chunks(model: ResidualDenoiser, noisy_np: np.ndarray, patch_size: int) -> np.ndarray:
@@ -718,6 +870,7 @@ def predict_points_in_chunks(model: ResidualDenoiser, noisy_np: np.ndarray, patc
     simple; later we can replace it with FPS/KNN overlapping patches + weighted
     stitching like the official baseline.
     """
+    # 这是最保守的省显存推理兜底：连续 chunk 独立预测，不做跨 chunk stitching。
     outs = []
     with jt.no_grad():
         for start in range(0, len(noisy_np), patch_size):
@@ -728,6 +881,7 @@ def predict_points_in_chunks(model: ResidualDenoiser, noisy_np: np.ndarray, patc
 
 
 def predict(args) -> None:
+    # 预测入口只做加载 checkpoint、前向推理、写 denoised.npy，不做训练或质量评估。
     check_paths(args, need_test=True, need_ckpt=True)
     model = ResidualDenoiser(
         k=args.k,
@@ -778,6 +932,7 @@ def predict(args) -> None:
 
 
 def make_zip(args) -> None:
+    # 打包入口只把 out_dir 下的正式相对路径写入 zip，不重新推理。
     out_dir = Path(args.out_dir)
     if not out_dir.exists():
         raise FileNotFoundError(f"out_dir not found: {out_dir}")
@@ -794,6 +949,7 @@ def make_zip(args) -> None:
 
 
 def validate_zip(args) -> None:
+    # 这里是轻量路径检查；完整 shape/dtype/finite 检查应使用 scripts/check_submission.py。
     zip_path = Path(args.zip)
     if not zip_path.exists():
         raise FileNotFoundError(f"zip not found: {zip_path}")
@@ -820,6 +976,8 @@ def apply_config(args):
     overrides = getattr(args, "_cli_overrides", {})
     if not args.config:
         return args
+    # 合并顺序：config -> profiles -> 显式 CLI 覆盖项。
+    # 这样 quick debug 的 `--steps 10` 不会被 YAML 默认值覆盖掉。
     cfg = yaml.safe_load(Path(args.config).read_text())
     for profile in args.profile:
         patch = yaml.safe_load(Path(profile).read_text())
@@ -887,6 +1045,7 @@ def apply_config(args):
         setattr(args, key, value)
 
     # Resolve repository-relative paths so configs remain portable across machines.
+    # 配置里优先写仓库相对路径，运行时再解析成绝对路径，方便本机/A6000 迁移。
     for key in ["data_root", "test_root", "train_list", "out_dir", "zip", "ckpt"]:
         value = getattr(args, key)
         if value and not Path(value).is_absolute():
@@ -908,6 +1067,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ckpt", default="experiments/denoise_baseline/best.pkl")
     p.add_argument("--num-points", type=int, default=2048)
     p.add_argument("--batch-size", type=int, default=2)
+    p.add_argument("--cache-clean", action="store_true", help="cache normalized clean OBJ vertices in memory during synthetic training")
+    p.add_argument("--prefetch-workers", type=int, default=0, help="background NumPy batch workers for synthetic training")
+    p.add_argument("--prefetch-queue-size", type=int, default=4)
+    p.add_argument("--profile-times", action="store_true", help="log data/compute/step timing")
+    p.add_argument("--profile-system-every", type=int, default=0, help="log nvidia-smi/CPU usage every N logged steps; 0 disables")
     p.add_argument("--steps", type=int, default=1000)
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--k", type=int, default=16)
@@ -952,6 +1116,7 @@ def main() -> None:
     parser = build_parser()
     defaults = vars(parser.parse_args([]))
     args = parser.parse_args()
+    # argparse 无法直接区分“用户显式传入”和“默认值”，所以这里先记录显式覆盖。
     args._cli_overrides = {
         k: v for k, v in vars(args).items()
         if k in defaults and v != defaults[k] and k != "config"
