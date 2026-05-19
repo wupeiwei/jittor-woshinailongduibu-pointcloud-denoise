@@ -1,0 +1,14 @@
+mode: predict
+debug: False
+load_ckpt: experiments/vm_distance_gate_micro20/checkpoint_19.pkl
+
+components:
+  data: predict_quick
+  transform: predict
+  system: vm
+  model: vm_distance_gate
+
+writer:
+  __target__: vm
+  save_dir: tmp_predict_vm_distance_gate_micro20
+  save_name: denoised

@@ -1,0 +1,18 @@
+mode: train
+debug: False
+
+components:
+  data: train_quick
+  transform: vm
+  system: vm_distance_gate_quick
+  model: vm_distance_gate
+
+loss:
+  loss: 1.0
+
+optimizer:
+  __target__: adam
+  lr: 0.00001
+
+trainer:
+  epochs: 1
