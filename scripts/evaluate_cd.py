@@ -40,7 +40,11 @@ FIELDS = [
     "category",
     "model_id",
     "sigma",
+    "plane_res_p75",
     "num_points",
+    "route",
+    "lir_steps",
+    "lir_alpha",
     "cd_noisy",
     "cd_pred",
     "cd_ratio",
@@ -104,6 +108,23 @@ def chamfer_l2_np(a: np.ndarray, b: np.ndarray) -> float:
     return float((dist_a2b ** 2).mean() + (dist_b2a ** 2).mean())
 
 
+def plane_res_p75(points: np.ndarray, k: int = 16, max_points: int = 8192, seed: int = 1234) -> float:
+    # 这里的 noisy-only 统计只用于决定是否启用 LIR，不参与监督目标。
+    pts = np.asarray(points, dtype=np.float32)
+    if len(pts) > max_points:
+        rng = np.random.default_rng(seed)
+        pts = pts[rng.choice(len(pts), max_points, replace=False)]
+    tree = cKDTree(pts)
+    _, idx = tree.query(pts, k=k + 1)
+    idx = idx[:, 1:]
+    neigh = pts[idx]
+    centered = neigh - neigh.mean(axis=1, keepdims=True)
+    cov = np.einsum("nki,nkj->nij", centered, centered) / max(k, 1)
+    evals = np.linalg.eigvalsh(cov)
+    residual = np.sqrt(np.maximum(evals[:, 0], 0.0))
+    return float(np.quantile(residual, 0.75))
+
+
 def metric_to_score(cd_pred: float, cd_noisy: float) -> float:
     if cd_noisy < 1e-15:
         return 100.0 if cd_pred < 1e-15 else 0.0
@@ -111,6 +132,7 @@ def metric_to_score(cd_pred: float, cd_noisy: float) -> float:
 
 
 def build_model(cfg: dict[str, Any], ckpt: Path) -> ResidualDenoiser:
+    # 评估脚本必须和训练/推理读取同一套模型开关，避免“评估的是另一个模型”。
     model_cfg = cfg.get("model", {})
     model = ResidualDenoiser(
         k=int(model_cfg.get("k", 16)),
@@ -148,6 +170,7 @@ def build_model(cfg: dict[str, Any], ckpt: Path) -> ResidualDenoiser:
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Evaluate checkpoint CD on synthetic noisy train/val OBJ samples.")
+    # 该脚本的目标是快速验证“模型是否至少比 noisy 更好”，不是模拟官方 hidden metric。
     p.add_argument("--config", default="configs/denoise_baseline.yaml")
     p.add_argument("--profile", action="append", default=[])
     p.add_argument("--ckpt", default="", help="Override checkpoint path")
@@ -159,6 +182,9 @@ def main() -> None:
     p.add_argument("--noise-min", type=float, default=-1.0)
     p.add_argument("--noise-max", type=float, default=-1.0)
     p.add_argument("--seed", type=int, default=1234)
+    p.add_argument("--lir-steps", type=int, default=0, help="Run lightweight iterative refinement for N steps; 0 keeps the original one-shot model prediction")
+    p.add_argument("--lir-alpha", type=float, default=0.5, help="Convex interpolation alpha for LIR: x_next=(1-alpha)*x+alpha*f(x)")
+    p.add_argument("--lir-gate-threshold", type=float, default=-1.0, help="If >=0 and --lir-steps > 0, run LIR only when plane_res_p75 >= this threshold; otherwise use safe one-shot")
     p.add_argument("--cpu", action="store_true", help="Use CPU instead of CUDA")
     args = p.parse_args()
 
@@ -195,11 +221,25 @@ def main() -> None:
             clean = sample_points_rng(clean_full, num_points, rng)
             sigma = float(rng.uniform(noise_min, noise_max))
             noisy = clean + rng.normal(0.0, sigma, clean.shape).astype(np.float32)
+            noisy_stat = plane_res_p75(noisy, seed=args.seed + i)
 
             with jt.no_grad():
-                pred, offset = model(jt.array(noisy[None, ...]), return_offset=True)
-                pred_np = np.asarray(pred.numpy()[0], dtype=np.float32)
-                offset_np = np.asarray(offset.numpy()[0], dtype=np.float32)
+                # 如果启用 LIR，则先做固定步数迭代，再退回到普通 one-shot 预测。
+                use_lir = int(args.lir_steps) > 0 and (float(args.lir_gate_threshold) < 0.0 or noisy_stat >= float(args.lir_gate_threshold))
+                if use_lir:
+                    x_np = noisy.astype(np.float32)
+                    last_offset_np = None
+                    for _ in range(int(args.lir_steps)):
+                        pred, offset = model(jt.array(x_np[None, ...]), return_offset=True)
+                        step_pred_np = np.asarray(pred.numpy()[0], dtype=np.float32)
+                        last_offset_np = np.asarray(offset.numpy()[0], dtype=np.float32)
+                        x_np = ((1.0 - float(args.lir_alpha)) * x_np + float(args.lir_alpha) * step_pred_np).astype(np.float32)
+                    pred_np = x_np
+                    offset_np = pred_np - noisy if last_offset_np is None else last_offset_np
+                else:
+                    pred, offset = model(jt.array(noisy[None, ...]), return_offset=True)
+                    pred_np = np.asarray(pred.numpy()[0], dtype=np.float32)
+                    offset_np = np.asarray(offset.numpy()[0], dtype=np.float32)
 
             cd_noisy = chamfer_l2_np(noisy, clean)
             cd_pred = chamfer_l2_np(pred_np, clean)
@@ -212,7 +252,11 @@ def main() -> None:
                 "category": parts[1] if len(parts) >= 3 and parts[0] == "shapenet" else "",
                 "model_id": parts[2] if len(parts) >= 3 and parts[0] == "shapenet" else "",
                 "sigma": sigma,
+                "plane_res_p75": noisy_stat,
                 "num_points": num_points,
+                "route": "lir" if use_lir else "safe",
+                "lir_steps": int(args.lir_steps) if use_lir else 0,
+                "lir_alpha": float(args.lir_alpha) if use_lir else "",
                 "cd_noisy": cd_noisy,
                 "cd_pred": cd_pred,
                 "cd_ratio": cd_ratio,
@@ -226,7 +270,7 @@ def main() -> None:
             writer.writerow(row)
             f.flush()
             print(
-                f"[{i}/{len(samples)}] score={cd_score:.2f} ratio={cd_ratio:.3f} "
+                f"[{i}/{len(samples)}] route={'lir' if use_lir else 'safe'} score={cd_score:.2f} ratio={cd_ratio:.3f} "
                 f"cd_noisy={cd_noisy:.6g} cd_pred={cd_pred:.6g} sample={sample}",
                 flush=True,
             )
