@@ -203,9 +203,51 @@ def build_or_load_cache(split: str, samples: list[tuple[str, Path]], split_seed:
     return expected
 
 
+class ShrinkGateAdapter(nn.Module):
+    """Trainable shrink/identity adapter constrained to the noisy↔base line.
+
+    Narrower than GARADv0: it can only learn how much to shrink fixed075-style
+    base predictions back toward noisy, not arbitrary 3D residuals. This keeps
+    the shrink signal training-driven instead of hand-tuned fixed alpha/k rules.
+    """
+
+    def __init__(self, in_dim: int = 14, hidden: int = 96, max_step: float = 0.010, gate_bias_init: float = -6.0, dist_scale: float = 0.1) -> None:
+        super().__init__()
+        self.max_step = float(max_step)
+        self.dist_scale = float(dist_scale)
+        self.mlp = nn.Sequential(
+            nn.Linear(in_dim, hidden), nn.ReLU(),
+            nn.Linear(hidden, hidden), nn.ReLU(),
+            nn.Linear(hidden, hidden // 2), nn.ReLU(),
+        )
+        self.gate_head = nn.Linear(hidden // 2, 1)
+        self.dist_head = nn.Linear(hidden // 2, 1)
+        # Bias toward identity at initialization. Without this, sigmoid heads
+        # start around 0.5 and create ~1e-3 movement before learning anything.
+        try:
+            self.gate_head.bias.assign(jt.ones_like(self.gate_head.bias) * float(gate_bias_init))
+            self.dist_head.bias.assign(jt.ones_like(self.dist_head.bias) * float(gate_bias_init))
+        except Exception:
+            pass
+
+    def execute(self, x: jt.Var, base: jt.Var, return_delta: bool = False):
+        h = self.mlp(x)
+        gate = jt.sigmoid(self.gate_head(h))
+        distance = jt.sigmoid(self.dist_head(h)) * self.max_step * self.dist_scale
+        direction = x[:, :, :3] - base
+        direction = direction / (((direction ** 2).sum(dim=-1, keepdims=True) + 1e-12) ** 0.5)
+        delta = gate * distance * direction
+        pred = base + delta
+        if return_delta:
+            return pred, delta, gate, distance
+        return pred
+
+
 def build_adapter(args: argparse.Namespace) -> nn.Module:
     if args.model == "garad":
         return GARADv0(in_dim=14, hidden=args.hidden, max_step=args.max_step)
+    if args.model == "shrink_gate":
+        return ShrinkGateAdapter(in_dim=14, hidden=args.hidden, max_step=args.max_step, gate_bias_init=args.gate_bias_init, dist_scale=args.dist_scale)
     if args.model == "residual_mlp":
         return ResidualMLPAdapter(in_dim=14, hidden=args.hidden, max_step=args.max_step)
     if args.model == "zero":
@@ -262,6 +304,12 @@ def evaluate(model: nn.Module, cache: list[Path], args: argparse.Namespace, out_
     means = {k: float(np.mean([r[k] for r in rows])) for k in ["cd_noisy", "cd_base", "cd_pred", "score_vs_base", "delta_l2_mean", "delta_l2_p95", "gate_mean", "distance_mean"]}
     means["pred_better_than_base_rate"] = float(np.mean([r["pred_better_than_base"] for r in rows]))
     means["base_better_than_noisy_rate"] = float(np.mean([r["base_better_than_noisy"] for r in rows]))
+    means["score_vs_base_mean"] = means["score_vs_base"]
+    means["pass_min_gain"] = bool(means["score_vs_base"] >= args.min_score_vs_base)
+    means["min_score_vs_base"] = float(args.min_score_vs_base)
+    means["pass_delta_safety"] = bool(means["delta_l2_mean"] <= args.max_safe_delta_mean and means["delta_l2_p95"] <= args.max_safe_delta_p95)
+    means["max_safe_delta_mean"] = float(args.max_safe_delta_mean)
+    means["max_safe_delta_p95"] = float(args.max_safe_delta_p95)
     means["n"] = len(rows)
     return means
 
@@ -282,14 +330,19 @@ def main() -> None:
     p.add_argument("--noise-max", type=float, default=0.02)
     p.add_argument("--geom-k", type=int, default=16)
     p.add_argument("--hidden", type=int, default=96)
-    p.add_argument("--model", choices=["garad", "residual_mlp", "zero"], default="garad")
+    p.add_argument("--model", choices=["garad", "shrink_gate", "residual_mlp", "zero"], default="garad")
     p.add_argument("--max-step", type=float, default=0.010)
+    p.add_argument("--gate-bias-init", type=float, default=-6.0, help="Initial bias for shrink_gate heads; negative values bias toward identity.")
+    p.add_argument("--dist-scale", type=float, default=0.1, help="Extra distance multiplier for shrink_gate to keep learned shrink bounded.")
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--cd-num-points", type=int, default=512)
     p.add_argument("--lambda-offset", type=float, default=0.05)
     p.add_argument("--lambda-delta", type=float, default=1.0)
     p.add_argument("--lambda-cd", type=float, default=1.0)
     p.add_argument("--log-every", type=int, default=25)
+    p.add_argument("--min-score-vs-base", type=float, default=0.10, help="Reject near-identity numerical wins; mean score_vs_base must exceed this threshold.")
+    p.add_argument("--max-safe-delta-mean", type=float, default=2.0e-4, help="Safety gate: reject learned adapters whose mean movement is too large for fixed075-base diagnostics.")
+    p.add_argument("--max-safe-delta-p95", type=float, default=8.0e-4, help="Safety gate: reject learned adapters whose p95 movement is too large for fixed075-base diagnostics.")
     p.add_argument("--base-ckpt", default="experiments/denoise_baseline/baseline.pkl")
     p.add_argument("--base-name", default="baseline")
     p.add_argument("--base-predict-patch-size", type=int, default=1000)
@@ -372,7 +425,12 @@ def main() -> None:
         "eval_cache": len(eval_cache),
         "checkpoint": str(ckpt),
         "eval": eval_summary,
-        "pass_gate": bool(eval_summary["cd_pred"] < eval_summary["cd_base"] and eval_summary["pred_better_than_base_rate"] >= 0.60),
+        "pass_gate": bool(
+            eval_summary["cd_pred"] < eval_summary["cd_base"]
+            and eval_summary["pred_better_than_base_rate"] >= 0.60
+            and eval_summary["pass_delta_safety"]
+            and eval_summary["pass_min_gain"]
+        ),
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
     report = [
@@ -386,10 +444,14 @@ def main() -> None:
         f"- cd_pred: {eval_summary['cd_pred']:.8g}",
         f"- base_better_than_noisy_rate: {eval_summary['base_better_than_noisy_rate']:.3f}",
         f"- pred_better_than_base_rate: {eval_summary['pred_better_than_base_rate']:.3f}",
+        f"- score_vs_base: {eval_summary['score_vs_base']:.8g}",
+        f"- min gain: `{eval_summary['pass_min_gain']}` (score_vs_base >= {eval_summary['min_score_vs_base']:.3g})",
         f"- delta_l2_mean: {eval_summary['delta_l2_mean']:.8g}",
+        f"- delta_l2_p95: {eval_summary['delta_l2_p95']:.8g}",
+        f"- delta safety: `{eval_summary['pass_delta_safety']}` (mean <= {eval_summary['max_safe_delta_mean']:.3g}, p95 <= {eval_summary['max_safe_delta_p95']:.3g})",
         f"- gate_mean: {eval_summary['gate_mean']:.8g}",
         "",
-        f"Pass gate: `{summary['pass_gate']}` (`cd_pred < cd_base` and win_rate >= 0.60).",
+        f"Pass gate: `{summary['pass_gate']}` (`cd_pred < cd_base`, win_rate >= 0.60, delta safety, and min gain).",
     ]
     (out_dir / "risk_report.md").write_text("\n".join(report) + "\n")
     print(json.dumps({"out_dir": str(out_dir), "eval": eval_summary, "pass_gate": summary["pass_gate"]}, ensure_ascii=False, indent=2), flush=True)

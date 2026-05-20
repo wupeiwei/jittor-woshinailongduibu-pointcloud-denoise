@@ -58,6 +58,13 @@ def build_model(cfg: dict[str, Any], ckpt: Path) -> ResidualDenoiser:
         staas_tau0=float(model_cfg.get("staas_tau0", 0.02)),
         staas_tau_min=float(model_cfg.get("staas_tau_min", 0.005)),
         staas_tau_max=float(model_cfg.get("staas_tau_max", 0.08)),
+        staas_fusion=bool(model_cfg.get("staas_fusion", False)),
+        staas_v2_gate=bool(model_cfg.get("staas_v2_gate", False)),
+        staas_v2_geo_weight=float(model_cfg.get("staas_v2_geo_weight", 0.25)),
+        staas_v2_gate_min=float(model_cfg.get("staas_v2_gate_min", 0.0)),
+        staas_v2_gate_max=float(model_cfg.get("staas_v2_gate_max", 1.0)),
+        staas_v2_noise_ref_low=float(model_cfg.get("staas_v2_noise_ref_low", 0.010)),
+        staas_v2_noise_ref_high=float(model_cfg.get("staas_v2_noise_ref_high", 0.030)),
         use_move_gate=bool(model_cfg.get("move_gate", False)),
         use_pwsenel_v2=bool(model_cfg.get("pwsenel_v2", False)),
         pwsenel_v2_edge_lock=float(model_cfg.get("pwsenel_v2_edge_lock", 0.7)),
@@ -82,20 +89,115 @@ def build_model(cfg: dict[str, Any], ckpt: Path) -> ResidualDenoiser:
     return model
 
 
-def plane_res_p75(points: np.ndarray, k: int = 16, max_points: int = 8192, seed: int = 1234) -> float:
+VETO_FEATURES = [
+    "plane_res_mean",
+    "plane_res_median",
+    "plane_res_p75",
+    "plane_res_p90",
+    "plane_res_iqr",
+    "edge_conf_mean",
+    "edge_conf_p75",
+    "scattering_mean",
+    "scattering_p75",
+    "mean_knn_p75",
+    "scale_mean",
+]
+
+# Full-data ridge fit from analysis/veto_guard_probe512_20260520_summary.json
+# Target: synthetic delta = ST-AAS-v2 score - baseline score. Positive means strong is better.
+VETO_MU = np.array([
+    0.010111018835573304,
+    0.009473905752429346,
+    0.011802821314972789,
+    0.014539589176933976,
+    0.004116646720461858,
+    0.3115911893255543,
+    0.4198972612066427,
+    0.3021209001162788,
+    0.3878704957169248,
+    0.03662987137352842,
+    0.033461914194049314,
+], dtype=np.float64)
+VETO_SD = np.array([
+    0.004176866790226334,
+    0.0040481358379597585,
+    0.004944423791595409,
+    0.005963308869620932,
+    0.001892928823914533,
+    0.0775502123536939,
+    0.10690225084604998,
+    0.057219387441940536,
+    0.06297138341221802,
+    0.013024378384181553,
+    0.011428245787660917,
+], dtype=np.float64)
+VETO_COEF = np.array([
+    14.747610792838934,
+    2.2316584810845734,
+    11.38634431336386,
+    9.126683729480172,
+    -1.773858552140475,
+    -2.5578392436670074,
+    4.722614168707231,
+    -3.3567142722153425,
+    -3.8524027094472033,
+    -12.592531290738595,
+    -14.1224349788964,
+], dtype=np.float64)
+VETO_INTERCEPT = -2.7975418878771507
+
+
+def noisy_geometry_stats(points: np.ndarray, k: int = 16, max_points: int = 8192, seed: int = 1234) -> dict[str, float]:
     pts = np.asarray(points, dtype=np.float32)
     if len(pts) > max_points:
         rng = np.random.default_rng(seed)
         pts = pts[rng.choice(len(pts), max_points, replace=False)]
     tree = cKDTree(pts)
-    _, idx = tree.query(pts, k=k + 1)
+    dists, idx = tree.query(pts, k=k + 1)
+    dists = dists[:, 1:]
     idx = idx[:, 1:]
     neigh = pts[idx]
+    rel = neigh - pts[:, None, :]
+    local_dist = np.sqrt(np.maximum((rel * rel).sum(axis=-1), 0.0))
+    mean_knn = dists.mean(axis=1)
+    scale = np.sort(local_dist, axis=1)[:, k // 2]
+
     centered = neigh - neigh.mean(axis=1, keepdims=True)
     cov = np.einsum("nki,nkj->nij", centered, centered) / max(k, 1)
     evals = np.linalg.eigvalsh(cov)
-    residual = np.sqrt(np.maximum(evals[:, 0], 0.0))
-    return float(np.quantile(residual, 0.75))
+    l1 = np.maximum(evals[:, 2], 1e-12)
+    l2 = np.maximum(evals[:, 1], 0.0)
+    l3 = np.maximum(evals[:, 0], 0.0)
+    linearity = np.clip((l1 - l2) / l1, 0.0, 1.0)
+    scattering = np.clip(l3 / l1, 0.0, 1.0)
+    edge_conf = np.clip(linearity * (1.0 - scattering), 0.0, 1.0)
+    plane_res = np.sqrt(np.maximum(l3, 0.0))
+
+    q25 = float(np.quantile(plane_res, 0.25))
+    q75 = float(np.quantile(plane_res, 0.75))
+    return {
+        "plane_res_mean": float(plane_res.mean()),
+        "plane_res_median": float(np.median(plane_res)),
+        "plane_res_p75": q75,
+        "plane_res_p90": float(np.quantile(plane_res, 0.90)),
+        "plane_res_iqr": q75 - q25,
+        "edge_conf_mean": float(edge_conf.mean()),
+        "edge_conf_p75": float(np.quantile(edge_conf, 0.75)),
+        "scattering_mean": float(scattering.mean()),
+        "scattering_p75": float(np.quantile(scattering, 0.75)),
+        "mean_knn_p75": float(np.quantile(mean_knn, 0.75)),
+        "scale_mean": float(scale.mean()),
+    }
+
+
+def plane_res_p75(points: np.ndarray, k: int = 16, max_points: int = 8192, seed: int = 1234) -> float:
+    return noisy_geometry_stats(points, k=k, max_points=max_points, seed=seed)["plane_res_p75"]
+
+
+def veto_pred_delta(stats: dict[str, float]) -> float:
+    x = np.array([stats[k] for k in VETO_FEATURES], dtype=np.float64)
+    z = (x - VETO_MU) / np.maximum(VETO_SD, 1e-12)
+    return float(VETO_INTERCEPT + z @ VETO_COEF)
 
 
 def make_zip(out_dir: Path, zip_path: Path) -> None:
@@ -125,6 +227,8 @@ def main() -> None:
     p.add_argument("--estimator-k", type=int, default=16)
     p.add_argument("--estimator-max-points", type=int, default=8192)
     p.add_argument("--low-threshold", type=float, default=0.006659, help="plane_res_p75 below this uses low checkpoint")
+    p.add_argument("--router-mode", choices=["threshold", "plane_veto"], default="threshold")
+    p.add_argument("--veto-margin", type=float, default=-2.0, help="plane_veto requires predicted_delta above this")
     p.add_argument("--seed", type=int, default=1234)
     p.add_argument("--cpu", action="store_true")
     p.add_argument("--no-zip", action="store_true")
@@ -156,7 +260,16 @@ def main() -> None:
         raise RuntimeError(f"no noisy.npy files under {test_root}")
     out_dir.mkdir(parents=True, exist_ok=True)
     route_csv = out_dir / "router_routes.csv"
-    fields = ["idx", "input", "output", "num_points", "plane_res_p75", "route", "elapsed_sec"]
+    fields = [
+        "idx",
+        "input",
+        "output",
+        "num_points",
+        *VETO_FEATURES,
+        "veto_pred_delta",
+        "route",
+        "elapsed_sec",
+    ]
     low_count = strong_count = 0
     t_all = time.time()
     with route_csv.open("w", newline="") as fcsv:
@@ -165,8 +278,14 @@ def main() -> None:
         for i, f in enumerate(files, 1):
             t0 = time.time()
             noisy_np = np.load(f).astype(np.float32)
-            score = plane_res_p75(noisy_np, k=args.estimator_k, max_points=args.estimator_max_points, seed=args.seed + i)
-            if score < args.low_threshold:
+            stats = noisy_geometry_stats(noisy_np, k=args.estimator_k, max_points=args.estimator_max_points, seed=args.seed + i)
+            score = stats["plane_res_p75"]
+            pred_delta = veto_pred_delta(stats) if args.router_mode == "plane_veto" else float("nan")
+            if args.router_mode == "plane_veto":
+                use_strong = score >= args.low_threshold and pred_delta > args.veto_margin
+            else:
+                use_strong = score >= args.low_threshold
+            if not use_strong:
                 route = "low"
                 model = low_model
                 low_count += 1
@@ -180,20 +299,26 @@ def main() -> None:
             out.parent.mkdir(parents=True, exist_ok=True)
             np.save(out, pred.astype(np.float32))
             elapsed = time.time() - t0
-            writer.writerow({
+            row = {
                 "idx": i,
                 "input": str(rel),
                 "output": str(out.relative_to(out_dir)),
                 "num_points": len(noisy_np),
-                "plane_res_p75": score,
+                "veto_pred_delta": pred_delta,
                 "route": route,
                 "elapsed_sec": elapsed,
-            })
+            }
+            row.update(stats)
+            writer.writerow(row)
             fcsv.flush()
-            print(f"[{i}/{len(files)}] route={route:6s} plane_res_p75={score:.6f} shape={pred.shape} out={out}", flush=True)
+            print(
+                f"[{i}/{len(files)}] route={route:6s} plane_res_p75={score:.6f} "
+                f"veto_delta={pred_delta:.3f} shape={pred.shape} out={out}",
+                flush=True,
+            )
 
     print("summary")
-    print(f"files: {len(files)} low={low_count} strong={strong_count} threshold={args.low_threshold:.6f}")
+    print(f"files: {len(files)} low={low_count} strong={strong_count} threshold={args.low_threshold:.6f} mode={args.router_mode} veto_margin={args.veto_margin:.3f}")
     print(f"routes: {route_csv}")
     print(f"elapsed_sec: {time.time() - t_all:.1f}")
     if not args.no_zip:

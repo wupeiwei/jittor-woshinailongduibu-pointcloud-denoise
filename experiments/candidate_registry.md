@@ -2,7 +2,7 @@
 
 Generated automatically by `scripts/candidate_registry.py`. Do not hand-edit the tables; append via the script.
 
-Total candidates: 16
+Total candidates: 20
 
 | time | name | stage | status | branch | patch | threshold | CD | P2S | official | zip | conclusion |
 |---|---|---|---|---|---:|---:|---:|---:|---:|---|---|
@@ -22,3 +22,7 @@ Total candidates: 16
 | 2026-05-19T13:37:50+08:00 | garad_bounded_tiny_shrink_a002_20260519 | Phase 1.5 bounded tiny smoke | candidate | fixed075-base-bounded-tiny | 1000 |  |  |  |  | `analysis/garad_bounded_tiny_fixed075_20260519/result_garad_bounded_tiny_shrink_a002_20260519.zip` | Bounded tiny smoke passes package/risk; shrink direction reduces movement vs noisy slightly, but this is not a submission recommendation without GT/official evidence. |
 | 2026-05-19T13:37:50+08:00 | garad_bounded_tiny_extend_a002_20260519 | Phase 1.5 bounded tiny smoke | archive | fixed075-base-bounded-tiny | 1000 |  |  |  |  | `analysis/garad_bounded_tiny_fixed075_20260519/result_garad_bounded_tiny_extend_a002_20260519.zip` | Package/risk pass, but extend direction increases movement vs noisy; archive as contrast. |
 | 2026-05-19T13:37:50+08:00 | garad_bounded_tiny_extend_a005_20260519 | Phase 1.5 bounded tiny smoke | archive | fixed075-base-bounded-tiny | 1000 |  |  |  |  | `analysis/garad_bounded_tiny_fixed075_20260519/result_garad_bounded_tiny_extend_a005_20260519.zip` | Package/risk pass, but larger extend direction increases movement vs noisy more; archive as upper-risk contrast. |
+| 2026-05-19T20:56:33+08:00 | garad_shrink_a002_fixed075_20260519 | Phase 1.5 artifact-level fixed075 shrink-only bounded adapter | candidate | main | 1000 |  |  |  |  | `analysis/garad_shrink_only_candidate_20260519/result_garad_bounded_tiny_shrink_a002_20260519.zip` | Hidden-test-safe artifact candidate; check_submission and Phase 0 package/movement suite passed, but no official CD/P2S claim. Movement vs fixed075 is tiny and proxy-only, so not a direct submission recommendation. |
+| 2026-05-20T08:41:52+08:00 | garad_lam20_fixed075_20260520 | Phase 1.5 GARA-D trained adapter | submitted | GARA-D lam20 NumPy-forward trained adapter on fixed075 base | 8192 |  | 40.80 | 66.07 | 53.43 | `/home/sallen/Desktop/result_garad_lam20_fixed075_20260520.zip` | NEW BEST. Beats fixed075 53.32 by +0.11; improves CD 40.65->40.80 and P2S 65.99->66.07. |
+| 2026-05-20T13:11:18+08:00 | router_plane_veto_01414_m2_20260520 | ST-AAS v2 router diagnostic | rejected | plane_veto router: low=fixed075/base, strong=ST-AAS v2 high-noise expert | 8192 | plane_veto; low_threshold=0.01414; veto_margin=-2 | 18.10 | 43.79 | 30.95 | `/home/sallen/Desktop/result_router_plane_veto_01414_m2_20260520.zip` | FAILED. Official hidden score collapsed to 30.95; do not resubmit router/ST-AAS v2 branch without new hidden-aligned evidence. |
+| 2026-05-20T17:54:16+08:00 | garad_lam20_lam18p5_interp05_20260520 | GARA-D zip-level conservative interpolation | archive | interp05: out=0.95*garad_lam20_fixed075 + 0.05*garad_lam18p5_fixed075 | 8192 |  |  |  |  | `/home/sallen/Desktop/result_garad_lam20_lam18p5_interp05_20260520.zip` | HOLD. Conservative A/B candidate for next submission window only; not a structural route and not recommended over new training-level evidence. |

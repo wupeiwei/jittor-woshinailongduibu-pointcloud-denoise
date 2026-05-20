@@ -1,0 +1,58 @@
+# ST-AAS v2: noisy-conditioned residual gate mainline.
+# Goal: structure-level upgrade over v1, not a fixed075 post-hoc variant.
+# Design: fuse ST-AAS geometry stats into features, then explicitly gate neural
+# residual movement by local noise/edge confidence and add a small bounded
+# geometry offset only where noisy scale suggests denoising is needed.
+
+experiment:
+  name: denoise_staas_v2_gate
+  seed: 123
+
+paths:
+  data_root: dataset_train
+  test_root: dataset_test_noisy
+  train_list: starter_code/datalist/train.txt
+  out_dir: results/denoise_staas_v2_gate
+  zip: result_denoise_staas_v2_gate.zip
+  ckpt: experiments/denoise_staas_v2_gate/staas_v2_gate.pkl
+  warm_start: experiments/denoise_baseline/baseline.pkl
+
+train:
+  steps: 12000
+  limit: 0
+  num_points: 2048
+  batch_size: 2
+  lr: 0.0001
+  noise_min: 0.002
+  noise_max: 0.040
+  cd_weight: 0.1
+  identity_weight: 0.02
+  movement_weight: 0.003
+  log_every: 20
+  save_every: 500
+
+model:
+  k: 24
+  feat_dim: 256
+  hidden: 256
+  pwsenel: false
+  staas: false
+  staas_fusion: true
+  staas_v2_gate: true
+  staas_v2_geo_weight: 0.25
+  staas_v2_gate_min: 0.35
+  staas_v2_gate_max: 1.0
+  staas_v2_noise_ref_low: 0.010
+  staas_v2_noise_ref_high: 0.030
+  staas_strength: 0.0
+  staas_tau0: 0.02
+  staas_tau_min: 0.004
+  staas_tau_max: 0.10
+  move_gate: false
+  pwsenel_v2: false
+  residual_clip: 0.0
+  adaptive_clip: false
+
+predict:
+  limit: 0
+  patch_size: 8192

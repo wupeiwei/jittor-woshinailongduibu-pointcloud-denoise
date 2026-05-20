@@ -1,0 +1,51 @@
+# ST-AAS v1: geometry-fusion denoiser, not a fixed075 post-hoc variant.
+# Goal: mainline architecture for 80+ attempts via noisy-conditioned local geometry.
+
+experiment:
+  name: denoise_staas_v1_fusion
+  seed: 123
+
+paths:
+  data_root: dataset_train
+  test_root: dataset_test_noisy
+  train_list: starter_code/datalist/train.txt
+  out_dir: results/denoise_staas_v1_fusion
+  zip: result_denoise_staas_v1_fusion.zip
+  ckpt: experiments/denoise_staas_v1_fusion/staas_v1_fusion.pkl
+
+train:
+  steps: 12000
+  limit: 0
+  num_points: 2048
+  batch_size: 2
+  lr: 0.0001
+  noise_min: 0.002
+  noise_max: 0.040
+  cd_weight: 0.1
+  identity_weight: 0.02
+  movement_weight: 0.005
+  log_every: 20
+  save_every: 500
+
+model:
+  k: 24
+  feat_dim: 256
+  hidden: 256
+  pwsenel: false
+  # staas_fusion is the important part: feed structure tensor / adaptive softmax
+  # statistics into the neural head. staas=false keeps the geometry branch from
+  # being blindly added as fixed post-process smoothing.
+  staas: false
+  staas_fusion: true
+  staas_strength: 0.0
+  staas_tau0: 0.02
+  staas_tau_min: 0.004
+  staas_tau_max: 0.10
+  move_gate: true
+  pwsenel_v2: false
+  residual_clip: 0.0
+  adaptive_clip: false
+
+predict:
+  limit: 0
+  patch_size: 8192

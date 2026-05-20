@@ -40,7 +40,17 @@ FIELDS = [
     "category",
     "model_id",
     "sigma",
+    "plane_res_mean",
+    "plane_res_median",
     "plane_res_p75",
+    "plane_res_p90",
+    "plane_res_iqr",
+    "edge_conf_mean",
+    "edge_conf_p75",
+    "scattering_mean",
+    "scattering_p75",
+    "mean_knn_p75",
+    "scale_mean",
     "num_points",
     "route",
     "lir_steps",
@@ -108,21 +118,54 @@ def chamfer_l2_np(a: np.ndarray, b: np.ndarray) -> float:
     return float((dist_a2b ** 2).mean() + (dist_b2a ** 2).mean())
 
 
-def plane_res_p75(points: np.ndarray, k: int = 16, max_points: int = 8192, seed: int = 1234) -> float:
-    # 这里的 noisy-only 统计只用于决定是否启用 LIR，不参与监督目标。
+def noisy_geometry_stats(points: np.ndarray, k: int = 16, max_points: int = 8192, seed: int = 1234) -> dict[str, float]:
+    # Noisy-only geometry features for routing / soft-gate probes.
+    # Must be computed on the exact synthetic noisy cloud used for this row;
+    # do not reconstruct noisy later or the estimator target drifts.
     pts = np.asarray(points, dtype=np.float32)
     if len(pts) > max_points:
         rng = np.random.default_rng(seed)
         pts = pts[rng.choice(len(pts), max_points, replace=False)]
     tree = cKDTree(pts)
-    _, idx = tree.query(pts, k=k + 1)
+    dists, idx = tree.query(pts, k=k + 1)
+    dists = dists[:, 1:]
     idx = idx[:, 1:]
     neigh = pts[idx]
+    rel = neigh - pts[:, None, :]
+    local_dist = np.sqrt(np.maximum((rel * rel).sum(axis=-1), 0.0))
+    mean_knn = dists.mean(axis=1)
+    scale = np.sort(local_dist, axis=1)[:, k // 2]
+
     centered = neigh - neigh.mean(axis=1, keepdims=True)
     cov = np.einsum("nki,nkj->nij", centered, centered) / max(k, 1)
     evals = np.linalg.eigvalsh(cov)
-    residual = np.sqrt(np.maximum(evals[:, 0], 0.0))
-    return float(np.quantile(residual, 0.75))
+    l1 = np.maximum(evals[:, 2], 1e-12)
+    l2 = np.maximum(evals[:, 1], 0.0)
+    l3 = np.maximum(evals[:, 0], 0.0)
+    linearity = np.clip((l1 - l2) / l1, 0.0, 1.0)
+    scattering = np.clip(l3 / l1, 0.0, 1.0)
+    edge_conf = np.clip(linearity * (1.0 - scattering), 0.0, 1.0)
+    plane_res = np.sqrt(np.maximum(l3, 0.0))
+
+    q25 = float(np.quantile(plane_res, 0.25))
+    q75 = float(np.quantile(plane_res, 0.75))
+    return {
+        "plane_res_mean": float(plane_res.mean()),
+        "plane_res_median": float(np.median(plane_res)),
+        "plane_res_p75": q75,
+        "plane_res_p90": float(np.quantile(plane_res, 0.90)),
+        "plane_res_iqr": q75 - q25,
+        "edge_conf_mean": float(edge_conf.mean()),
+        "edge_conf_p75": float(np.quantile(edge_conf, 0.75)),
+        "scattering_mean": float(scattering.mean()),
+        "scattering_p75": float(np.quantile(scattering, 0.75)),
+        "mean_knn_p75": float(np.quantile(mean_knn, 0.75)),
+        "scale_mean": float(scale.mean()),
+    }
+
+
+def plane_res_p75(points: np.ndarray, k: int = 16, max_points: int = 8192, seed: int = 1234) -> float:
+    return noisy_geometry_stats(points, k=k, max_points=max_points, seed=seed)["plane_res_p75"]
 
 
 def metric_to_score(cd_pred: float, cd_noisy: float) -> float:
@@ -144,6 +187,13 @@ def build_model(cfg: dict[str, Any], ckpt: Path) -> ResidualDenoiser:
         staas_tau0=float(model_cfg.get("staas_tau0", 0.02)),
         staas_tau_min=float(model_cfg.get("staas_tau_min", 0.005)),
         staas_tau_max=float(model_cfg.get("staas_tau_max", 0.08)),
+        staas_fusion=bool(model_cfg.get("staas_fusion", False)),
+        staas_v2_gate=bool(model_cfg.get("staas_v2_gate", False)),
+        staas_v2_geo_weight=float(model_cfg.get("staas_v2_geo_weight", 0.25)),
+        staas_v2_gate_min=float(model_cfg.get("staas_v2_gate_min", 0.0)),
+        staas_v2_gate_max=float(model_cfg.get("staas_v2_gate_max", 1.0)),
+        staas_v2_noise_ref_low=float(model_cfg.get("staas_v2_noise_ref_low", 0.010)),
+        staas_v2_noise_ref_high=float(model_cfg.get("staas_v2_noise_ref_high", 0.030)),
         use_move_gate=bool(model_cfg.get("move_gate", False)),
         use_pwsenel_v2=bool(model_cfg.get("pwsenel_v2", False)),
         pwsenel_v2_edge_lock=float(model_cfg.get("pwsenel_v2_edge_lock", 0.7)),
@@ -221,7 +271,8 @@ def main() -> None:
             clean = sample_points_rng(clean_full, num_points, rng)
             sigma = float(rng.uniform(noise_min, noise_max))
             noisy = clean + rng.normal(0.0, sigma, clean.shape).astype(np.float32)
-            noisy_stat = plane_res_p75(noisy, seed=args.seed + i)
+            noisy_stats = noisy_geometry_stats(noisy, seed=args.seed + i)
+            noisy_stat = noisy_stats["plane_res_p75"]
 
             with jt.no_grad():
                 # 如果启用 LIR，则先做固定步数迭代，再退回到普通 one-shot 预测。
@@ -252,7 +303,7 @@ def main() -> None:
                 "category": parts[1] if len(parts) >= 3 and parts[0] == "shapenet" else "",
                 "model_id": parts[2] if len(parts) >= 3 and parts[0] == "shapenet" else "",
                 "sigma": sigma,
-                "plane_res_p75": noisy_stat,
+                **noisy_stats,
                 "num_points": num_points,
                 "route": "lir" if use_lir else "safe",
                 "lir_steps": int(args.lir_steps) if use_lir else 0,

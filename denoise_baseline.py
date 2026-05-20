@@ -55,6 +55,8 @@ from jittor import nn
 
 from src.model.feature import FeatureExtraction, get_knn_idx
 
+from denoise_utils import gather_neighbors
+
 
 def set_seed(seed: int) -> None:
     random.seed(seed)
@@ -286,12 +288,8 @@ class PWSENEL(nn.Module):
         )
 
     def gather_neighbors(self, x: jt.Var, idx: jt.Var) -> jt.Var:
-        # x: (B,N,C), idx: (B,N,K) -> (B,N,K,C)
-        B, N, C = x.shape
-        base = (jt.arange(B) * N).reshape(B, 1, 1)
-        flat_idx = (idx + base).reshape(-1)
-        flat = x.reshape(B * N, C)
-        return flat[flat_idx].reshape(B, N, idx.shape[-1], C)
+        # Thin wrapper around the shared utility for backward compatibility.
+        return gather_neighbors(x, idx)
 
     def execute(self, feat: jt.Var, points: jt.Var) -> jt.Var:
         B, N, C = feat.shape
@@ -341,11 +339,8 @@ class PWSENELv2Gate(nn.Module):
         )
 
     def gather_neighbors(self, x: jt.Var, idx: jt.Var) -> jt.Var:
-        B, N, C = x.shape
-        base = (jt.arange(B) * N).reshape(B, 1, 1)
-        flat_idx = (idx + base).reshape(-1)
-        flat = x.reshape(B * N, C)
-        return flat[flat_idx].reshape(B, N, idx.shape[-1], C)
+        # Thin wrapper around the shared utility for backward compatibility.
+        return gather_neighbors(x, idx)
 
     def execute(self, feat: jt.Var, points: jt.Var, return_stats: bool = False):
         B, N, C = feat.shape
@@ -380,7 +375,7 @@ class STAASv0(nn.Module):
     Minimal, switchable geometry operator for ablation:
     - single KNN neighborhood;
     - local scale / density-adaptive softmax temperature;
-    - structure tensor eigenvalue descriptors;
+    - structure-tensor invariant descriptors (no eigensolver dependency);
     - edge-aware smoothing suppression.
 
     This v0 deliberately avoids the full anisotropic matrix. It is a safe
@@ -407,12 +402,8 @@ class STAASv0(nn.Module):
         self.eps = eps
 
     def gather_neighbors(self, x: jt.Var, idx: jt.Var) -> jt.Var:
-        # x: (B,N,C), idx: (B,N,K) -> (B,N,K,C)
-        B, N, C = x.shape
-        base = (jt.arange(B) * N).reshape(B, 1, 1)
-        flat_idx = (idx + base).reshape(-1)
-        flat = x.reshape(B * N, C)
-        return flat[flat_idx].reshape(B, N, idx.shape[-1], C)
+        # Thin wrapper around the shared utility for backward compatibility.
+        return gather_neighbors(x, idx)
 
     def execute(self, points: jt.Var, return_stats: bool = False):
         B, N, _ = points.shape
@@ -435,20 +426,32 @@ class STAASv0(nn.Module):
         smooth = (weight * neigh).sum(dim=2)
         smooth_offset = smooth - points
 
-        # Structure tensor / covariance descriptors.
-        mu = neigh.mean(dim=2).unsqueeze(2)
-        centered = neigh - mu
+        # Structure tensor / covariance invariant descriptors.
+        # Avoid jt.linalg.eigh here: the A6000 competition env has historically
+        # missed libcusolver.so.11, and eigensolver dependency makes smoke fail
+        # before the model can train. These invariants are cheaper and stable:
+        #   anisotropy: off-diagonal / diagonal covariance energy
+        #   planarity: xy/xz/yz area energy relative to total variance
+        #   scattering: isotropic variance balance proxy
+        centered = rel - rel.mean(dim=2).unsqueeze(2)
         cov = jt.matmul(centered.permute(0, 1, 3, 2), centered) / float(self.k)
-        eigvals, _ = jt.linalg.eigh(cov)
-        # eigh returns ascending eigenvalues; use lambda_1 >= lambda_2 >= lambda_3.
-        l1 = jt.maximum(eigvals[:, :, 2], self.eps)
-        l2 = jt.maximum(eigvals[:, :, 1], 0.0)
-        l3 = jt.maximum(eigvals[:, :, 0], 0.0)
-        linearity = jt.clamp((l1 - l2) / (l1 + self.eps), 0.0, 1.0)
-        planarity = jt.clamp((l2 - l3) / (l1 + self.eps), 0.0, 1.0)
-        scattering = jt.clamp(l3 / (l1 + self.eps), 0.0, 1.0)
+        cxx = jt.abs(cov[:, :, 0, 0])
+        cyy = jt.abs(cov[:, :, 1, 1])
+        czz = jt.abs(cov[:, :, 2, 2])
+        cxy = cov[:, :, 0, 1]
+        cxz = cov[:, :, 0, 2]
+        cyz = cov[:, :, 1, 2]
+        trace = cxx + cyy + czz + self.eps
+        diag_min = jt.minimum(jt.minimum(cxx, cyy), czz)
+        diag_max = jt.maximum(jt.maximum(cxx, cyy), czz)
+        off_energy = cxy * cxy + cxz * cxz + cyz * cyz
+        diag_energy = cxx * cxx + cyy * cyy + czz * czz + self.eps
+        linearity = jt.clamp(off_energy / (diag_energy + off_energy + self.eps), 0.0, 1.0)
+        area_energy = cxx * cyy + cxx * czz + cyy * czz
+        planarity = jt.clamp(area_energy / (trace * trace + self.eps), 0.0, 1.0)
+        scattering = jt.clamp(diag_min / (diag_max + self.eps), 0.0, 1.0)
 
-        # Edge-like confidence: prefer line/ridge neighborhoods, suppress unstable scatter.
+        # Edge-like confidence: prefer anisotropic neighborhoods, suppress unstable scatter.
         # Planarity is tracked for logs/future v1 but not treated as edge by itself.
         edge_conf = jt.clamp(linearity * (1.0 - scattering), 0.0, 1.0)
         pred = points + (1.0 - edge_conf).unsqueeze(-1) * smooth_offset
@@ -460,6 +463,7 @@ class STAASv0(nn.Module):
                 "planarity": planarity,
                 "scattering": scattering,
                 "edge_conf": edge_conf,
+                "smooth_offset": smooth_offset,
             }
         return pred
 
@@ -476,6 +480,13 @@ class ResidualDenoiser(nn.Module):
         staas_tau0: float = 0.02,
         staas_tau_min: float = 0.005,
         staas_tau_max: float = 0.08,
+        staas_fusion: bool = False,
+        staas_v2_gate: bool = False,
+        staas_v2_geo_weight: float = 0.25,
+        staas_v2_gate_min: float = 0.0,
+        staas_v2_gate_max: float = 1.0,
+        staas_v2_noise_ref_low: float = 0.010,
+        staas_v2_noise_ref_high: float = 0.030,
         use_move_gate: bool = False,
         use_pwsenel_v2: bool = False,
         pwsenel_v2_edge_lock: float = 0.7,
@@ -509,6 +520,13 @@ class ResidualDenoiser(nn.Module):
         ) if use_pwsenel_v2 else None
         self.use_staas = use_staas
         self.staas_strength = staas_strength
+        self.staas_fusion = staas_fusion
+        self.staas_v2_gate = staas_v2_gate
+        self.staas_v2_geo_weight = staas_v2_geo_weight
+        self.staas_v2_gate_min = staas_v2_gate_min
+        self.staas_v2_gate_max = staas_v2_gate_max
+        self.staas_v2_noise_ref_low = staas_v2_noise_ref_low
+        self.staas_v2_noise_ref_high = staas_v2_noise_ref_high
         self.residual_clip = residual_clip
         self.adaptive_clip = adaptive_clip
         self.adaptive_clip_min = adaptive_clip_min
@@ -523,7 +541,25 @@ class ResidualDenoiser(nn.Module):
         self.noise_aware_gate_ref_high = noise_aware_gate_ref_high
         self.hybrid_safe_strong = hybrid_safe_strong
         self.hybrid_router_scale = hybrid_router_scale
-        self.staas = STAASv0(k=k, tau0=staas_tau0, tau_min=staas_tau_min, tau_max=staas_tau_max) if use_staas else None
+        self.staas = STAASv0(k=k, tau0=staas_tau0, tau_min=staas_tau_min, tau_max=staas_tau_max) if (use_staas or staas_fusion or staas_v2_gate) else None
+        self.staas_geo_fuse = nn.Sequential(
+            nn.Linear(feat_dim + 9, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, feat_dim),
+            nn.ReLU(),
+        ) if staas_fusion else None
+        self.staas_v2_gate_net = nn.Sequential(
+            nn.Linear(feat_dim + 9, hidden // 2),
+            nn.ReLU(),
+            nn.Linear(hidden // 2, 1),
+            nn.Sigmoid(),
+        ) if staas_v2_gate else None
+        self.staas_v2_geo_gate_net = nn.Sequential(
+            nn.Linear(feat_dim + 9, hidden // 2),
+            nn.ReLU(),
+            nn.Linear(hidden // 2, 1),
+            nn.Sigmoid(),
+        ) if staas_v2_gate else None
         self.k_for_scale = k
         self.use_move_gate = use_move_gate
         self.head = nn.Sequential(
@@ -548,11 +584,8 @@ class ResidualDenoiser(nn.Module):
         ) if use_move_gate else None
 
     def _gather_neighbors(self, x: jt.Var, idx: jt.Var) -> jt.Var:
-        B, N, C = x.shape
-        base = (jt.arange(B) * N).reshape(B, 1, 1)
-        flat_idx = (idx + base).reshape(-1)
-        flat = x.reshape(B * N, C)
-        return flat[flat_idx].reshape(B, N, idx.shape[-1], C)
+        # Thin wrapper around the shared utility for backward compatibility.
+        return gather_neighbors(x, idx)
 
     def execute(self, noisy: jt.Var, return_offset: bool = False):
         # 主路径：noisy -> feature -> residual offset -> 可选门控/裁剪/几何分支 -> pred。
@@ -561,6 +594,21 @@ class ResidualDenoiser(nn.Module):
         if self.pwsenel is not None:
             feat = self.pwsenel(feat, noisy)
         B, N, C = feat.shape
+        staas_pred = None
+        staas_stats = None
+        if self.staas is not None and (self.staas_fusion or self.staas_v2_gate):
+            staas_pred, staas_stats = self.staas(noisy, return_stats=True)
+            geo = jt.concat([
+                staas_stats["smooth_offset"],
+                staas_stats["scale"].unsqueeze(-1),
+                staas_stats["tau"].unsqueeze(-1),
+                staas_stats["linearity"].unsqueeze(-1),
+                staas_stats["planarity"].unsqueeze(-1),
+                staas_stats["scattering"].unsqueeze(-1),
+                staas_stats["edge_conf"].unsqueeze(-1),
+            ], dim=-1)
+            if self.staas_fusion:
+                feat = self.staas_geo_fuse(jt.concat([feat, geo], dim=-1).reshape(B * N, C + 9)).reshape(B, N, C)
         neural_offset = self.head(feat.reshape(B * N, C)).reshape(B, N, 3)
 
         if self.hybrid_safe_strong:
@@ -613,6 +661,32 @@ class ResidualDenoiser(nn.Module):
                 gate = self.pwsenel_v2_gate(feat, noisy)
                 neural_offset = neural_offset * gate
             offset = neural_offset
+        if self.staas_v2_gate and staas_stats is not None:
+            # ST-AAS v2: noisy-conditioned residual gate. The first v2 smoke
+            # showed a common failure mode: multiplying the whole neural offset
+            # by a learned/noise/edge gate made the model too timid at mid/high
+            # noise, where the baseline wins by moving decisively. So the gate
+            # is intentionally one-sided now: protect low-noise/edge regions via
+            # a lower-bound schedule, but do not suppress high-noise residuals
+            # below the neural head's own prediction. Geometry remains a small
+            # auxiliary offset and gets its own gate.
+            gate_in = jt.concat([feat, geo], dim=-1).reshape(B * N, C + 9)
+            learned_protect = self.staas_v2_gate_net(gate_in).reshape(B, N, 1)
+            learned_geo = self.staas_v2_geo_gate_net(gate_in).reshape(B, N, 1)
+            noise_t = jt.clamp(
+                (staas_stats["scale"].unsqueeze(-1) - self.staas_v2_noise_ref_low)
+                / (self.staas_v2_noise_ref_high - self.staas_v2_noise_ref_low + 1e-12),
+                0.0,
+                1.0,
+            )
+            flat_lock = 1.0 - staas_stats["edge_conf"].unsqueeze(-1)
+            # protect_t is high only for low-noise / edge-like neighborhoods.
+            protect_t = jt.clamp((1.0 - noise_t) + staas_stats["edge_conf"].unsqueeze(-1), 0.0, 1.0)
+            residual_gate = 1.0 - (1.0 - self.staas_v2_gate_min) * learned_protect * protect_t
+            residual_gate = jt.clamp(residual_gate, self.staas_v2_gate_min, self.staas_v2_gate_max)
+            geo_offset = staas_stats["smooth_offset"].stop_grad()
+            geo_gate = learned_geo * noise_t * flat_lock
+            offset = offset * residual_gate + self.staas_v2_geo_weight * geo_offset * geo_gate
         if self.adaptive_clip:
             # Piecewise cloud-scale adaptive clipping. Keep low-noise clouds
             # conservative, reach a v2_clip-like mid residual around ref_mid,
@@ -635,8 +709,9 @@ class ResidualDenoiser(nn.Module):
             offset_norm = ((offset ** 2).sum(dim=-1, keepdims=True) + 1e-12) ** 0.5
             scale = jt.clamp(self.residual_clip / (offset_norm + 1e-12), 0.0, 1.0)
             offset = offset * scale
-        if self.staas is not None:
-            staas_pred = self.staas(noisy)
+        if self.staas is not None and self.use_staas:
+            if staas_pred is None:
+                staas_pred = self.staas(noisy)
             staas_offset = (staas_pred - noisy).stop_grad()
             offset = offset + self.staas_strength * staas_offset
         pred = noisy + offset
@@ -689,6 +764,13 @@ def write_run_summary(args, ds_len: int = 0) -> None:
         f"staas_tau0: {args.staas_tau0}",
         f"staas_tau_min: {args.staas_tau_min}",
         f"staas_tau_max: {args.staas_tau_max}",
+        f"staas_fusion: {args.staas_fusion}",
+        f"staas_v2_gate: {args.staas_v2_gate}",
+        f"staas_v2_geo_weight: {args.staas_v2_geo_weight}",
+        f"staas_v2_gate_min: {args.staas_v2_gate_min}",
+        f"staas_v2_gate_max: {args.staas_v2_gate_max}",
+        f"staas_v2_noise_ref_low: {args.staas_v2_noise_ref_low}",
+        f"staas_v2_noise_ref_high: {args.staas_v2_noise_ref_high}",
         f"move_gate: {args.move_gate}",
         f"pwsenel_v2: {args.pwsenel_v2}",
         f"pwsenel_v2_edge_lock: {args.pwsenel_v2_edge_lock}",
@@ -738,6 +820,13 @@ def train(args) -> None:
         staas_tau0=args.staas_tau0,
         staas_tau_min=args.staas_tau_min,
         staas_tau_max=args.staas_tau_max,
+        staas_fusion=args.staas_fusion,
+        staas_v2_gate=args.staas_v2_gate,
+        staas_v2_geo_weight=args.staas_v2_geo_weight,
+        staas_v2_gate_min=args.staas_v2_gate_min,
+        staas_v2_gate_max=args.staas_v2_gate_max,
+        staas_v2_noise_ref_low=args.staas_v2_noise_ref_low,
+        staas_v2_noise_ref_high=args.staas_v2_noise_ref_high,
         use_move_gate=args.move_gate,
         use_pwsenel_v2=args.pwsenel_v2,
         pwsenel_v2_edge_lock=args.pwsenel_v2_edge_lock,
@@ -757,6 +846,11 @@ def train(args) -> None:
         hybrid_safe_strong=args.hybrid_safe_strong,
         hybrid_router_scale=args.hybrid_router_scale,
     )
+    os.makedirs(Path(args.ckpt).parent, exist_ok=True)
+    warm_start = getattr(args, "warm_start", "")
+    if warm_start:
+        print(f"warm_start: loading compatible params from {warm_start}", flush=True)
+        model.load(warm_start)
     opt = nn.Adam(model.parameters(), lr=args.lr)
     prefetcher = None
     if args.prefetch_workers > 0:
@@ -781,6 +875,8 @@ def train(args) -> None:
         "pred_offset_mean",
         "pred_offset_abs_mean",
         "pred_offset_l2_mean",
+        "identity_loss",
+        "movement_loss",
         "data_time_sec",
         "compute_time_sec",
         "step_time_sec",
@@ -810,7 +906,9 @@ def train(args) -> None:
             pred, pred_offset = model(noisy, return_offset=True)
             loss_offset = ((pred - clean) ** 2).mean()
             loss_cd = chamfer_l2(pred, clean) if args.cd_weight > 0 else jt.array(0.0)
-            loss = loss_offset + args.cd_weight * loss_cd
+            loss_identity = ((pred - noisy) ** 2).mean() if args.identity_weight > 0 else jt.array(0.0)
+            loss_movement = ((pred_offset ** 2).sum(dim=-1) + 1e-12).mean() if args.movement_weight > 0 else jt.array(0.0)
+            loss = loss_offset + args.cd_weight * loss_cd + args.identity_weight * loss_identity + args.movement_weight * loss_movement
             opt.step(loss)
             compute_done = time.time()
             data_time = data_ready - step_start
@@ -823,6 +921,8 @@ def train(args) -> None:
             pred_offset_mean_v = scalar(pred_offset.mean())
             pred_offset_abs_mean_v = scalar(jt.abs(pred_offset).mean())
             pred_offset_l2_mean_v = scalar((((pred_offset ** 2).sum(dim=-1) + 1e-12) ** 0.5).mean())
+            identity_loss_v = scalar(loss_identity)
+            movement_loss_v = scalar(loss_movement)
             if step == 1 or step % args.log_every == 0:
                 elapsed = time.time() - t0
                 profile_now = args.profile_times or (args.profile_system_every > 0 and step % args.profile_system_every == 0)
@@ -848,6 +948,8 @@ def train(args) -> None:
                     "pred_offset_mean": pred_offset_mean_v,
                     "pred_offset_abs_mean": pred_offset_abs_mean_v,
                     "pred_offset_l2_mean": pred_offset_l2_mean_v,
+                    "identity_loss": identity_loss_v,
+                    "movement_loss": movement_loss_v,
                     "data_time_sec": data_time,
                     "compute_time_sec": compute_time,
                     "step_time_sec": step_time,
@@ -893,6 +995,13 @@ def predict(args) -> None:
         staas_tau0=args.staas_tau0,
         staas_tau_min=args.staas_tau_min,
         staas_tau_max=args.staas_tau_max,
+        staas_fusion=args.staas_fusion,
+        staas_v2_gate=args.staas_v2_gate,
+        staas_v2_geo_weight=args.staas_v2_geo_weight,
+        staas_v2_gate_min=args.staas_v2_gate_min,
+        staas_v2_gate_max=args.staas_v2_gate_max,
+        staas_v2_noise_ref_low=args.staas_v2_noise_ref_low,
+        staas_v2_noise_ref_high=args.staas_v2_noise_ref_high,
         use_move_gate=args.move_gate,
         use_pwsenel_v2=args.pwsenel_v2,
         pwsenel_v2_edge_lock=args.pwsenel_v2_edge_lock,
@@ -997,6 +1106,7 @@ def apply_config(args):
     args.out_dir = paths.get("out_dir", args.out_dir)
     args.zip = paths.get("zip", args.zip)
     args.ckpt = paths.get("ckpt", args.ckpt)
+    args.warm_start = paths.get("warm_start", args.warm_start)
 
     args.steps = train_cfg.get("steps", args.steps)
     args.limit = train_cfg.get("limit", args.limit)
@@ -1006,6 +1116,8 @@ def apply_config(args):
     args.noise_min = train_cfg.get("noise_min", args.noise_min)
     args.noise_max = train_cfg.get("noise_max", args.noise_max)
     args.cd_weight = train_cfg.get("cd_weight", args.cd_weight)
+    args.identity_weight = train_cfg.get("identity_weight", args.identity_weight)
+    args.movement_weight = train_cfg.get("movement_weight", args.movement_weight)
     args.log_every = train_cfg.get("log_every", args.log_every)
     args.save_every = train_cfg.get("save_every", args.save_every)
 
@@ -1018,6 +1130,13 @@ def apply_config(args):
     args.staas_tau0 = model_cfg.get("staas_tau0", args.staas_tau0)
     args.staas_tau_min = model_cfg.get("staas_tau_min", args.staas_tau_min)
     args.staas_tau_max = model_cfg.get("staas_tau_max", args.staas_tau_max)
+    args.staas_fusion = model_cfg.get("staas_fusion", args.staas_fusion)
+    args.staas_v2_gate = model_cfg.get("staas_v2_gate", args.staas_v2_gate)
+    args.staas_v2_geo_weight = model_cfg.get("staas_v2_geo_weight", args.staas_v2_geo_weight)
+    args.staas_v2_gate_min = model_cfg.get("staas_v2_gate_min", args.staas_v2_gate_min)
+    args.staas_v2_gate_max = model_cfg.get("staas_v2_gate_max", args.staas_v2_gate_max)
+    args.staas_v2_noise_ref_low = model_cfg.get("staas_v2_noise_ref_low", args.staas_v2_noise_ref_low)
+    args.staas_v2_noise_ref_high = model_cfg.get("staas_v2_noise_ref_high", args.staas_v2_noise_ref_high)
     args.move_gate = model_cfg.get("move_gate", args.move_gate)
     args.pwsenel_v2 = model_cfg.get("pwsenel_v2", args.pwsenel_v2)
     args.pwsenel_v2_edge_lock = model_cfg.get("pwsenel_v2_edge_lock", args.pwsenel_v2_edge_lock)
@@ -1046,7 +1165,7 @@ def apply_config(args):
 
     # Resolve repository-relative paths so configs remain portable across machines.
     # 配置里优先写仓库相对路径，运行时再解析成绝对路径，方便本机/A6000 迁移。
-    for key in ["data_root", "test_root", "train_list", "out_dir", "zip", "ckpt"]:
+    for key in ["data_root", "test_root", "train_list", "out_dir", "zip", "ckpt", "warm_start"]:
         value = getattr(args, key)
         if value and not Path(value).is_absolute():
             setattr(args, key, str(ROOT / value))
@@ -1065,6 +1184,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out-dir", default="results/denoise_baseline")
     p.add_argument("--zip", default="result_denoise_baseline.zip")
     p.add_argument("--ckpt", default="experiments/denoise_baseline/best.pkl")
+    p.add_argument("--warm-start", default="", help="Optional compatible checkpoint to initialize model before training")
     p.add_argument("--num-points", type=int, default=2048)
     p.add_argument("--batch-size", type=int, default=2)
     p.add_argument("--cache-clean", action="store_true", help="cache normalized clean OBJ vertices in memory during synthetic training")
@@ -1081,8 +1201,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--noise-min", type=float, default=0.005)
     p.add_argument("--noise-max", type=float, default=0.02)
     p.add_argument("--cd-weight", type=float, default=0.0)
+    p.add_argument("--identity-weight", type=float, default=0.0, help="Regularize predictions toward noisy input; useful as low-noise identity pressure")
+    p.add_argument("--movement-weight", type=float, default=0.0, help="Regularize residual movement magnitude")
     p.add_argument("--pwsenel", action="store_true")
-    p.add_argument("--staas", action="store_true", help="Enable ST-AAS v0 geometry branch")
+    p.add_argument("--staas", action="store_true", help="Enable ST-AAS geometry residual branch")
+    p.add_argument("--staas-fusion", action="store_true", help="Fuse ST-AAS geometry statistics into the neural denoising head")
+    p.add_argument("--staas-v2-gate", action="store_true", help="Enable ST-AAS v2 noisy-conditioned residual gate")
+    p.add_argument("--staas-v2-geo-weight", type=float, default=0.25)
+    p.add_argument("--staas-v2-gate-min", type=float, default=0.0)
+    p.add_argument("--staas-v2-gate-max", type=float, default=1.0)
+    p.add_argument("--staas-v2-noise-ref-low", type=float, default=0.010)
+    p.add_argument("--staas-v2-noise-ref-high", type=float, default=0.030)
     p.add_argument("--move-gate", action="store_true", help="Enable per-point offset movement gate")
     p.add_argument("--pwsenel-v2", action="store_true", help="Enable PW-SENEL v2 explicit noise/edge confidence gate")
     p.add_argument("--pwsenel-v2-edge-lock", type=float, default=0.7)
@@ -1109,6 +1238,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=123)
     p.add_argument("--log-every", type=int, default=10)
     p.add_argument("--save-every", type=int, default=200)
+    p.add_argument("--cpu", action="store_true", help="Run Jittor in CPU mode for local smoke tests")
     return p
 
 
@@ -1123,7 +1253,10 @@ def main() -> None:
     }
     args = apply_config(args)
     set_seed(args.seed)
-    jt.flags.use_cuda = 1
+    if args.cpu:
+        jt.flags.use_cuda = 0
+    else:
+        jt.flags.use_cuda = 1
     if args.mode == "train":
         train(args)
     elif args.mode == "predict":

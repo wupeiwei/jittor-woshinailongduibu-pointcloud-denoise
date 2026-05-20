@@ -39,7 +39,13 @@ starter_code/.venv/
 /results/
 /runs/
 /logs/
+# Analysis scratch outputs (covers both pre/post archive states)
 /analysis/
+analysis/
+
+# Archived experiment outputs / large data dumps - never commit
+/archive/
+archive/
 *.pkl
 *.pth
 *.pt
@@ -61,7 +67,7 @@ result.json
 *.log
 /tmp/
 /scratch/
-/.trash/
+.trash/
 
 # OS / editor
 .DS_Store
