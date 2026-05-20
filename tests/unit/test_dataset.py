@@ -19,13 +19,13 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-# ``denoise_baseline`` imports Jittor at top of file, so the whole module is
-# unimportable without Jittor. Skip the file if Jittor is not available.
-from tests.conftest import HAS_JITTOR, JITTOR_IMPORT_ERROR
+# ``denoise_baseline`` imports Jittor and trimesh at top of file, so the whole
+# module is unimportable without both. Skip the file if either is missing.
+from tests.conftest import HAS_BASELINE_DEPS, HAS_JITTOR, BASELINE_DEPS_ERROR, JITTOR_IMPORT_ERROR
 
 pytestmark = pytest.mark.skipif(
-    not HAS_JITTOR,
-    reason=f"Jittor unavailable in this environment: {JITTOR_IMPORT_ERROR}",
+    not HAS_BASELINE_DEPS,
+    reason=f"denoise_baseline deps unavailable: {BASELINE_DEPS_ERROR}",
 )
 
 

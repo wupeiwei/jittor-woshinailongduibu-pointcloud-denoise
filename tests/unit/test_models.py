@@ -14,11 +14,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tests.conftest import HAS_JITTOR, JITTOR_IMPORT_ERROR
+from tests.conftest import HAS_BASELINE_DEPS, HAS_JITTOR, BASELINE_DEPS_ERROR, JITTOR_IMPORT_ERROR
 
 pytestmark = pytest.mark.skipif(
-    not HAS_JITTOR,
-    reason=f"Jittor unavailable in this environment: {JITTOR_IMPORT_ERROR}",
+    not HAS_BASELINE_DEPS,
+    reason=f"denoise_baseline deps unavailable: {BASELINE_DEPS_ERROR}",
 )
 
 

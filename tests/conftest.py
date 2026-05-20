@@ -43,6 +43,21 @@ except Exception as exc:  # pragma: no cover - environment dependent
     HAS_JITTOR = False
     JITTOR_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
 
+# Best-effort trimesh probe. ``denoise_baseline`` imports trimesh at module
+# level, so tests importing from it also need trimesh available.
+try:  # pragma: no cover - environment dependent
+    import trimesh  # noqa: F401
+
+    HAS_TRIMESH = True
+    TRIMESH_IMPORT_ERROR: str | None = None
+except Exception as exc:  # pragma: no cover - environment dependent
+    HAS_TRIMESH = False
+    TRIMESH_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+
+# Combined flag: tests that import denoise_baseline need both Jittor and trimesh.
+HAS_BASELINE_DEPS = HAS_JITTOR and HAS_TRIMESH
+BASELINE_DEPS_ERROR = JITTOR_IMPORT_ERROR or TRIMESH_IMPORT_ERROR
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
