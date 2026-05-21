@@ -1,3 +1,8 @@
+# IDE / editor tools
+.qoder/
+.codex/
+.agents/
+
 # Python / cache
 __pycache__/
 *.py[cod]
