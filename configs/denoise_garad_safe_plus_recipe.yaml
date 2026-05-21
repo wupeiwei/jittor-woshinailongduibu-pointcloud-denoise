@@ -1,0 +1,55 @@
+# GARA-D safe-plus training recipe ablation.
+#
+# Purpose:
+# - keep the baseline architecture and data path unchanged;
+# - test only low-risk training recipe switches: robust offset loss + LR warmup/cosine;
+# - produce an artifact that can be compared against denoise_baseline / lam20 anchors.
+#
+# This config is NOT an official submission recommendation by itself. Any artifact
+# produced from it must pass synthetic eval, movement diagnostics, zip compliance,
+# and comparison against the current official best before spending a submit slot.
+
+experiment:
+  name: denoise_garad_safe_plus_recipe
+  seed: 123
+
+paths:
+  data_root: dataset_train
+  test_root: dataset_test_noisy
+  train_list: starter_code/datalist/train.txt
+  out_dir: results/denoise_garad_safe_plus_recipe
+  zip: result_denoise_garad_safe_plus_recipe.zip
+  ckpt: experiments/denoise_garad_safe_plus_recipe/baseline.pkl
+
+train:
+  steps: 5000
+  limit: 2000
+  num_points: 2048
+  batch_size: 2
+  lr: 0.0001
+  # Opt-in recipe changes versus configs/denoise_baseline.yaml.
+  loss_type: huber
+  huber_delta: 0.01
+  lr_scheduler: warmup_cosine
+  warmup_steps: 500
+  eta_min_ratio: 0.05
+  noise_min: 0.005
+  noise_max: 0.02
+  cd_weight: 0.1
+  log_every: 20
+  save_every: 500
+
+model:
+  k: 16
+  feat_dim: 256
+  hidden: 256
+  pwsenel: false
+  staas: false
+  staas_strength: 1.0
+  staas_tau0: 0.02
+  staas_tau_min: 0.005
+  staas_tau_max: 0.08
+
+predict:
+  limit: 0
+  patch_size: 1000

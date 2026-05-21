@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import os
 import queue
 import random
@@ -726,6 +727,52 @@ def chamfer_l2(a: jt.Var, b: jt.Var) -> jt.Var:
     return jt.min(dist, dim=2).mean() + jt.min(dist, dim=1).mean()
 
 
+def pointwise_offset_loss(pred: jt.Var, clean: jt.Var, loss_type: str = "mse", huber_delta: float = 0.01) -> jt.Var:
+    """Point-wise offset regression loss with a default-preserving switch.
+
+    ``mse`` keeps the historical baseline behavior. ``huber`` / ``smooth_l1``
+    are low-risk recipe knobs for robust offset training; they are opt-in and
+    should be ablated before any official submission candidate is generated.
+    """
+    diff = pred - clean
+    if loss_type == "mse":
+        return (diff ** 2).mean()
+    abs_diff = jt.abs(diff)
+    delta = float(huber_delta)
+    if delta <= 0:
+        raise ValueError(f"huber_delta must be positive, got {huber_delta}")
+    if loss_type == "huber":
+        quadratic = jt.minimum(abs_diff, delta)
+        linear = abs_diff - quadratic
+        return (0.5 * quadratic ** 2 + delta * linear).mean()
+    if loss_type == "smooth_l1":
+        quadratic = jt.minimum(abs_diff, delta)
+        linear = abs_diff - quadratic
+        return (0.5 * quadratic ** 2 / delta + linear).mean()
+    raise ValueError(f"unknown loss_type: {loss_type}")
+
+
+def lr_factor_for_step(step: int, total_steps: int, scheduler: str = "none", warmup_steps: int = 0, eta_min_ratio: float = 0.05) -> float:
+    """Return a multiplicative LR factor for train-step schedulers.
+
+    Default ``scheduler=none`` and ``warmup_steps=0`` exactly preserves the old
+    constant-LR behavior. Warmup is linear; cosine decay starts after warmup.
+    """
+    scheduler = (scheduler or "none").lower()
+    if scheduler not in {"none", "constant", "cosine", "warmup_cosine"}:
+        raise ValueError(f"unknown lr_scheduler: {scheduler}")
+    warmup_steps = max(0, int(warmup_steps))
+    total_steps = max(1, int(total_steps))
+    eta_min_ratio = float(eta_min_ratio)
+    if warmup_steps > 0 and step <= warmup_steps:
+        return max(float(step) / float(warmup_steps), 1.0 / float(warmup_steps))
+    if scheduler in {"none", "constant"}:
+        return 1.0
+    decay_steps = max(1, total_steps - warmup_steps)
+    progress = min(max((step - warmup_steps) / decay_steps, 0.0), 1.0)
+    return eta_min_ratio + (1.0 - eta_min_ratio) * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+
 def check_paths(args, need_train: bool = False, need_test: bool = False, need_ckpt: bool = False) -> None:
     if need_train:
         if not Path(args.data_root).exists():
@@ -758,6 +805,11 @@ def write_run_summary(args, ds_len: int = 0) -> None:
         f"feat_dim: {args.feat_dim}",
         f"hidden: {args.hidden}",
         f"lr: {args.lr}",
+        f"loss_type: {args.loss_type}",
+        f"huber_delta: {args.huber_delta}",
+        f"lr_scheduler: {args.lr_scheduler}",
+        f"warmup_steps: {args.warmup_steps}",
+        f"eta_min_ratio: {args.eta_min_ratio}",
         f"pwsenel: {args.pwsenel}",
         f"staas: {args.staas}",
         f"staas_strength: {args.staas_strength}",
@@ -869,6 +921,7 @@ def train(args) -> None:
     write_run_summary(args, ds_len=len(ds))
     csv_fields = [
         "step",
+        "lr",
         "loss",
         "offset_mse",
         "cd",
@@ -903,8 +956,17 @@ def train(args) -> None:
             step_start = time.time()
             noisy, clean = make_batch_prefetched(prefetcher, ds, args.batch_size)
             data_ready = time.time()
+            lr_factor = lr_factor_for_step(
+                step,
+                args.steps,
+                scheduler=args.lr_scheduler,
+                warmup_steps=args.warmup_steps,
+                eta_min_ratio=args.eta_min_ratio,
+            )
+            current_lr = args.lr * lr_factor
+            opt.lr = current_lr
             pred, pred_offset = model(noisy, return_offset=True)
-            loss_offset = ((pred - clean) ** 2).mean()
+            loss_offset = pointwise_offset_loss(pred, clean, loss_type=args.loss_type, huber_delta=args.huber_delta)
             loss_cd = chamfer_l2(pred, clean) if args.cd_weight > 0 else jt.array(0.0)
             loss_identity = ((pred - noisy) ** 2).mean() if args.identity_weight > 0 else jt.array(0.0)
             loss_movement = ((pred_offset ** 2).sum(dim=-1) + 1e-12).mean() if args.movement_weight > 0 else jt.array(0.0)
@@ -935,13 +997,14 @@ def train(args) -> None:
                 if profile_now:
                     profile_msg += f" gpu_util='{gpu_utilization()}' cpu_util='{cpu_utilization()}'"
                 print(
-                    f"step={step} loss={loss_v:.6f} offset_mse={offset_mse_v:.6f} "
+                    f"step={step} lr={current_lr:.6g} loss={loss_v:.6f} offset_loss={offset_mse_v:.6f} "
                     f"cd={cd_v:.6f} pred_offset_abs_mean={pred_offset_abs_mean_v:.6f} "
                     f"pred_offset_l2_mean={pred_offset_l2_mean_v:.6f} elapsed={elapsed:.1f}s{profile_msg}",
                     flush=True,
                 )
                 csv_w.writerow({
                     "step": step,
+                    "lr": current_lr,
                     "loss": loss_v,
                     "offset_mse": offset_mse_v,
                     "cd": cd_v,
@@ -1113,6 +1176,11 @@ def apply_config(args):
     args.num_points = train_cfg.get("num_points", args.num_points)
     args.batch_size = train_cfg.get("batch_size", args.batch_size)
     args.lr = train_cfg.get("lr", args.lr)
+    args.loss_type = train_cfg.get("loss_type", args.loss_type)
+    args.huber_delta = train_cfg.get("huber_delta", args.huber_delta)
+    args.lr_scheduler = train_cfg.get("lr_scheduler", args.lr_scheduler)
+    args.warmup_steps = train_cfg.get("warmup_steps", args.warmup_steps)
+    args.eta_min_ratio = train_cfg.get("eta_min_ratio", args.eta_min_ratio)
     args.noise_min = train_cfg.get("noise_min", args.noise_min)
     args.noise_max = train_cfg.get("noise_max", args.noise_max)
     args.cd_weight = train_cfg.get("cd_weight", args.cd_weight)
@@ -1198,6 +1266,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--feat-dim", type=int, default=256)
     p.add_argument("--hidden", type=int, default=256)
     p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--loss-type", choices=["mse", "huber", "smooth_l1"], default="mse", help="Point-wise offset regression loss; mse preserves baseline behavior")
+    p.add_argument("--huber-delta", type=float, default=0.01, help="Delta/beta for huber or smooth_l1 offset loss")
+    p.add_argument("--lr-scheduler", choices=["none", "constant", "cosine", "warmup_cosine"], default="none", help="Step LR scheduler; none preserves baseline behavior")
+    p.add_argument("--warmup-steps", type=int, default=0, help="Linear LR warmup steps before optional cosine decay")
+    p.add_argument("--eta-min-ratio", type=float, default=0.05, help="Minimum LR ratio for cosine scheduler")
     p.add_argument("--noise-min", type=float, default=0.005)
     p.add_argument("--noise-max", type=float, default=0.02)
     p.add_argument("--cd-weight", type=float, default=0.0)
